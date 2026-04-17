@@ -88,9 +88,50 @@ def is_modify(left: SchemaObject, right: SchemaObject) -> bool:
     return left.attr_without_name() != right.attr_without_name()
 
 
+def is_edge_related_to_rename(
+    edge: SchemaEdge,
+    rename_left_to_right: Dict[str, str],
+) -> bool:
+    """
+    True, если ребро связано с объектом, который участвует в rename-паре.
+    Используется для подавления add/drop edge noise при Rename.
+    """
+    return (
+        edge.source_id in rename_left_to_right
+        or edge.target_id in rename_left_to_right
+        or edge.source_id in rename_left_to_right.values()
+        or edge.target_id in rename_left_to_right.values()
+    )
+
+
+def build_rename_map(
+    left_graph: SchemaGraph,
+    right_graph: SchemaGraph,
+    delta_details: DeltaDetails,
+) -> Dict[str, str]:
+    """
+    Возвращает mapping left_object_id -> right_object_id
+    для всех объектов, распознанных как Rename.
+    """
+    rename_map: Dict[str, str] = {}
+
+    for left_id, right_id in sorted(delta_details.modified_vertex_pairs):
+        left_obj = left_graph.get_vertex(left_id)
+        right_obj = right_graph.get_vertex(right_id)
+
+        if left_obj is None or right_obj is None:
+            continue
+
+        if is_rename(left_obj, right_obj):
+            rename_map[left_id] = right_id
+
+    return rename_map
+
+
 def build_add_operations(
     right_graph: SchemaGraph,
     delta_details: DeltaDetails,
+    rename_left_to_right: Dict[str, str],
 ) -> List[Operation]:
     ops: List[Operation] = []
 
@@ -109,6 +150,8 @@ def build_add_operations(
     for edge_id in sorted(delta_details.delta.added_edges):
         edge = right_graph.get_edge(edge_id)
         if edge is None:
+            continue
+        if is_edge_related_to_rename(edge, rename_left_to_right):
             continue
 
         ops.append(
@@ -131,21 +174,26 @@ def build_add_operations(
 def build_drop_operations(
     left_graph: SchemaGraph,
     delta_details: DeltaDetails,
+    rename_left_to_right: Dict[str, str],
 ) -> List[Operation]:
     ops: List[Operation] = []
 
     # Сначала drop edges, потом drop vertices.
-    # Это согласуется с зависимостной логикой и обычно даёт более устойчивый порядок.
     for edge_id in sorted(delta_details.delta.removed_edges):
         edge = left_graph.get_edge(edge_id)
         if edge is None:
             continue
+
+        if is_edge_related_to_rename(edge, rename_left_to_right):
+            continue
+
         ops.append(DropOperation(target=edge.edge_id))
 
     for vertex_id in sorted(delta_details.delta.removed_vertices):
         obj = left_graph.get_vertex(vertex_id)
         if obj is None:
             continue
+
         ops.append(DropOperation(target=obj.object_id))
 
     return ops
@@ -334,8 +382,26 @@ def reconstruct_operations(
 
     operations: List[Operation] = []
 
-    operations.extend(build_add_operations(right_graph, delta_details))
-    operations.extend(build_drop_operations(left_graph, delta_details))
+    rename_left_to_right = build_rename_map(
+        left_graph=left_graph,
+        right_graph=right_graph,
+        delta_details=delta_details,
+    )
+
+    operations.extend(
+        build_add_operations(
+            right_graph=right_graph,
+            delta_details=delta_details,
+            rename_left_to_right=rename_left_to_right,
+        )
+    )
+    operations.extend(
+        build_drop_operations(
+            left_graph=left_graph,
+            delta_details=delta_details,
+            rename_left_to_right=rename_left_to_right,
+        )
+    )
     operations.extend(
         build_rename_modify_operations(left_graph, right_graph, delta_details)
     )

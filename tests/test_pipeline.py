@@ -147,3 +147,24 @@ def test_pipeline_exposes_branch_artifacts():
     assert artifacts.detection is not None
     assert artifacts.result is not None
 
+
+def test_pipeline_branch_a_rename_has_no_edge_noise():
+    base_graph = build_base_graph()
+    branch_a_graph = build_branch_a_graph()
+    branch_b_graph = build_branch_b_graph()
+
+    artifacts = analyze_merge_with_artifacts(
+        base_graph=base_graph,
+        branch_a_graph=branch_a_graph,
+        branch_b_graph=branch_b_graph,
+    )
+
+    noisy_ops = [
+        op for op in artifacts.result.operations_a
+        if hasattr(op, "target") and (
+            op.target.startswith("contains:")
+            or op.target.startswith("typedAs:")
+        )
+    ]
+
+    assert len(noisy_ops) == 0

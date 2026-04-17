@@ -139,3 +139,28 @@ def test_reconstruct_modify_not_split_into_add_and_drop():
 
     assert "public.users.email" not in object_drop_targets
     assert "public.users.email" not in object_add_targets
+
+
+def test_rename_does_not_generate_edge_noise():
+    base_graph = build_base_users_graph()
+
+    builder = build_schema_graph()
+    builder.add_table("users")
+    builder.add_column("users", "id", data_type="integer", nullable=False)
+    builder.add_column("users", "email_address", data_type="text", nullable=False)
+    branch_graph = builder.build()
+
+    operations = reconstruct(base_graph, branch_graph)
+
+    rename_ops = extract_ops_by_type(operations, RenameOperation)
+    assert len(rename_ops) == 1
+
+    noisy_ops = [
+        op for op in operations
+        if hasattr(op, "target") and (
+            op.target.startswith("contains:")
+            or op.target.startswith("typedAs:")
+        )
+    ]
+
+    assert len(noisy_ops) == 0
