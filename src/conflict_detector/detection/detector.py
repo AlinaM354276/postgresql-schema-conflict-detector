@@ -6,7 +6,7 @@ from typing import Iterable, List, Set, Tuple
 from src.conflict_detector.core.models import Conflict, Operation
 from src.conflict_detector.graph.schema_graph import SchemaGraph
 from src.conflict_detector.rules.base import ConflictRule, RuleContext
-from src.conflict_detector.rules.basic_rules import BASIC_RULES
+from src.conflict_detector.rules.registry import DEFAULT_RULES
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ def detect_conflicts(
     3. собираем найденные конфликты
     4. убираем дубли
     """
-    active_rules = list(rules) if rules is not None else list(BASIC_RULES)
+    active_rules = list(rules) if rules is not None else list(DEFAULT_RULES)
 
     ops_a = list(operations_a)
     ops_b = list(operations_b)

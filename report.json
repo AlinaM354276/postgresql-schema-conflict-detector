@@ -1,0 +1,69 @@
+{
+  "operations_a": [
+    {
+      "target": "public.users.email",
+      "new_name": "email_address",
+      "operation_type": "Rename"
+    }
+  ],
+  "operations_b": [
+    {
+      "target": "public.users.email",
+      "delta": {
+        "nullable": true
+      },
+      "operation_type": "Modify"
+    }
+  ],
+  "rule_conflicts": [
+    {
+      "rule_id": "R6_RENAME_VS_MODIFY",
+      "message": "Object is renamed in one branch and modified in another branch.",
+      "object_ids": [
+        "public.users.email"
+      ],
+      "severity": "MEDIUM",
+      "operation_a": {
+        "target": "public.users.email",
+        "new_name": "email_address",
+        "operation_type": "Rename"
+      },
+      "operation_b": {
+        "target": "public.users.email",
+        "delta": {
+          "nullable": true
+        },
+        "operation_type": "Modify"
+      },
+      "metadata": {
+        "operation_a_type": "RenameOperation",
+        "operation_b_type": "ModifyOperation"
+      }
+    }
+  ],
+  "merge_attempt": {
+    "is_defined": false,
+    "error_message": "Cannot modify unknown object or edge: public.users.email",
+    "invariant_violations": [],
+    "merge_conflicts": [
+      {
+        "rule_id": "M1_MERGE_UNDEFINED",
+        "message": "Merge candidate cannot be constructed: Cannot modify unknown object or edge: public.users.email",
+        "object_ids": [],
+        "severity": "CRITICAL",
+        "operation_a": null,
+        "operation_b": null,
+        "metadata": {
+          "kind": "merge_undefined"
+        }
+      }
+    ],
+    "merged_graph": null
+  },
+  "summary": {
+    "total_rule_conflicts": 1,
+    "merge_defined": false,
+    "invariant_violations_count": 0,
+    "has_any_conflicts": true
+  }
+}

@@ -143,7 +143,12 @@ def build_add_operations(
         ops.append(
             AddOperation(
                 target=obj.object_id,
-                params=freeze_attrs(obj.attr_dict()),
+                params=freeze_attrs(
+                    {
+                        "object_type": obj.object_type.value,
+                        **obj.attr_dict(),
+                    }
+                ),
             )
         )
 
