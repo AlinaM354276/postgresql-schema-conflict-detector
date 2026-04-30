@@ -1,4 +1,4 @@
-ъname: Schema Merge Analyzer
+name: Schema Merge Analyzer
 
 on:
   push:
