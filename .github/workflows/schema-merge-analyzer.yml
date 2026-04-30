@@ -1,4 +1,4 @@
-name: Schema Merge Analyzer
+ъname: Schema Merge Analyzer
 
 on:
   push:
@@ -32,6 +32,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
 
-      - name: Run analyzer
+      - name: Run analyzer on sample DDL
         run: |
-          python -m src.conflict_detector.cli --help
+          mkdir -p schema-merge-report
+          python -m src.conflict_detector.cli \
+            --base base.sql \
+            --a branch_a.sql \
+            --b branch_b.sql \
+            --out schema-merge-report \
+            --impact-threshold 5
+
+      - name: Upload analysis report
+        uses: actions/upload-artifact@v4
+        with:
+          name: schema-merge-report
+          path: schema-merge-report/
