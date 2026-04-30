@@ -152,8 +152,9 @@ def _build_summary(
         "low_conflicts": low_count,
         "merge_defined": result.merge_attempt.is_defined,
         "merge_blocked": (
-            not result.merge_attempt.is_defined
-            or critical_count > 0
+                not result.merge_attempt.is_defined
+                or critical_count > 0
+                or high_count > 0
         ),
         "is_commutative": result.merge_attempt.is_commutative,
         "invariant_violations_count": (

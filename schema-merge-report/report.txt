@@ -1,0 +1,76 @@
+Schema Merge Conflict Analysis Report
+=====================================
+
+Metadata
+--------
+timestamp: 2026-04-30T20:43:40.639047+00:00
+repo: .
+branch A: test-a
+branch B: test-b
+execution time seconds: 0.8543687
+impact threshold: 5
+
+Operations A
+------------
+- Drop type relation typedAs:public.users.email->type.varchar.
+
+Operations B
+------------
+- Add constraint public.users.unique_users_email (type=UNIQUE, columns=email).
+- Change data type of public.users.email to varchar(255).
+
+Rule Conflicts
+--------------
+No rule conflicts.
+
+Merge Attempt
+-------------
+defined: False
+commutative indicator: False
+error: Merge is undefined: at least one composition order cannot be constructed or violates schema invariants.
+
+Path AB
+  constructed: True
+  invariant violations: 0
+
+Path BA
+  constructed: True
+  invariant violations: 1
+  invariant violation details:
+    - INV_COLUMN_SINGLE_DATATYPE: Column must have exactly one data type.; objects=['public.users.email']
+  error: Merge path BA violates schema invariants.
+
+Merge-level conflicts and indicators:
+- [CRITICAL] M2_INV_COLUMN_SINGLE_DATATYPE
+  Message: Column must have exactly one data type.
+  Objects: ['public.users.email']
+  Metadata: {'base_severity': 'CRITICAL', 'evaluated_severity': 'CRITICAL', 'impact_size': 1, 'invariant_id': 'INV_COLUMN_SINGLE_DATATYPE', 'kind': 'invariant_violation'}
+
+- [MEDIUM] M3_NON_COMMUTATIVE_OPERATIONS
+  Message: Operation compositions ΔA∘ΔB and ΔB∘ΔA produce different schema graphs. This is treated as a potential semantic conflict indicator; final merge validity is decided by construction and invariant validation.
+  Objects: []
+  Metadata: {'base_severity': 'MEDIUM', 'evaluated_severity': 'MEDIUM', 'impact_size': 0, 'kind': 'non_commutativity_indicator'}
+
+
+Severity Distribution
+---------------------
+CRITICAL: 1
+HIGH: 0
+MEDIUM: 1
+LOW: 0
+
+Summary
+-------
+total rule conflicts: 0
+total merge conflicts: 2
+total conflicts: 2
+critical conflicts: 1
+high conflicts: 0
+medium conflicts: 1
+low conflicts: 0
+merge defined: False
+merge blocked: True
+is commutative: False
+invariant violations count: 1
+has any conflicts: True
+has critical conflicts: True

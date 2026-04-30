@@ -1,0 +1,539 @@
+{
+  "metadata": {
+    "timestamp": "2026-04-30T20:57:05.945699+00:00",
+    "repo": null,
+    "branch_a": null,
+    "branch_b": null,
+    "execution_time_seconds": 0.009255200000000019,
+    "impact_threshold": 5
+  },
+  "operations_a": [
+    {
+      "target": "public.users.email",
+      "operation_type": "Drop"
+    }
+  ],
+  "operations_b": [
+    {
+      "target": "public.users.unique_users_email",
+      "params": {
+        "columns": "email",
+        "constraint_type": "UNIQUE",
+        "name": "unique_users_email",
+        "object_type": "Constraint",
+        "schema": "public",
+        "table": "users"
+      },
+      "operation_type": "Add"
+    }
+  ],
+  "rule_conflicts": [
+    {
+      "rule_id": "C2_DROP_COLUMN_VS_ADD_CONSTRAINT",
+      "message": "Column is dropped in one branch while a constraint depending on this column is added in another branch.",
+      "object_ids": [
+        "public.users.email",
+        "public.users.unique_users_email"
+      ],
+      "severity": "HIGH",
+      "operation_a": {
+        "target": "public.users.email",
+        "operation_type": "Drop"
+      },
+      "operation_b": {
+        "target": "public.users.unique_users_email",
+        "params": {
+          "columns": "email",
+          "constraint_type": "UNIQUE",
+          "name": "unique_users_email",
+          "object_type": "Constraint",
+          "schema": "public",
+          "table": "users"
+        },
+        "operation_type": "Add"
+      },
+      "metadata": {
+        "base_severity": "HIGH",
+        "constraint_column": "email",
+        "constraint_id": "public.users.unique_users_email",
+        "dropped_column_id": "public.users.email",
+        "evaluated_severity": "HIGH",
+        "impact_size": 2,
+        "operation_a_type": "DropOperation",
+        "operation_b_type": "AddOperation"
+      }
+    }
+  ],
+  "interference": {
+    "total_pairs": 1,
+    "pairs": [
+      {
+        "operation_a": {
+          "target": "public.users.email",
+          "operation_type": "Drop"
+        },
+        "operation_b": {
+          "target": "public.users.unique_users_email",
+          "params": {
+            "columns": "email",
+            "constraint_type": "UNIQUE",
+            "name": "unique_users_email",
+            "object_type": "Constraint",
+            "schema": "public",
+            "table": "users"
+          },
+          "operation_type": "Add"
+        },
+        "shared_impact": [
+          "contains:public.users->public.users.email",
+          "hasConstraint:public.users.email->public.users.unique_users_email",
+          "public.users.email",
+          "public.users.unique_users_email",
+          "typedAs:public.users.email->type.varchar"
+        ]
+      }
+    ]
+  },
+  "merge_attempt": {
+    "is_defined": true,
+    "error_message": null,
+    "is_commutative": true,
+    "invariant_violations": [],
+    "merge_conflicts": [],
+    "paths": {
+      "AB": {
+        "order": "AB",
+        "is_constructed": true,
+        "error_message": null,
+        "invariant_violations": [],
+        "conflicts": [],
+        "graph": {
+          "vertices": {
+            "public.users": {
+              "type": "Table",
+              "name": "users",
+              "attributes": {
+                "schema": "public",
+                "name": "users"
+              }
+            },
+            "public.users.id": {
+              "type": "Column",
+              "name": "id",
+              "attributes": {
+                "table": "users",
+                "schema": "public",
+                "data_type": "integer",
+                "data_type_raw": "int",
+                "nullable": false,
+                "name": "id"
+              }
+            },
+            "type.integer": {
+              "type": "DataType",
+              "name": "integer",
+              "attributes": {
+                "builtin": true,
+                "name": "integer"
+              }
+            },
+            "type.varchar": {
+              "type": "DataType",
+              "name": "varchar",
+              "attributes": {
+                "builtin": true,
+                "name": "varchar"
+              }
+            },
+            "public.users.name": {
+              "type": "Column",
+              "name": "name",
+              "attributes": {
+                "table": "users",
+                "data_type_raw": "varchar(255)",
+                "schema": "public",
+                "nullable": true,
+                "data_type": "varchar",
+                "name": "name"
+              }
+            },
+            "public.users.primary_key_users_id": {
+              "type": "Constraint",
+              "name": "primary_key_users_id",
+              "attributes": {
+                "table": "users",
+                "schema": "public",
+                "columns": "id",
+                "constraint_type": "PRIMARY_KEY",
+                "name": "primary_key_users_id"
+              }
+            },
+            "public.users.unique_users_email": {
+              "type": "Constraint",
+              "name": "unique_users_email",
+              "attributes": {
+                "name": "unique_users_email",
+                "columns": "email",
+                "table": "users",
+                "schema": "public",
+                "constraint_type": "UNIQUE"
+              }
+            }
+          },
+          "edges": {
+            "contains:public.users->public.users.id": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.id",
+              "attributes": {}
+            },
+            "typedAs:public.users.id->type.integer": {
+              "type": "typedAs",
+              "source": "public.users.id",
+              "target": "type.integer",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.name": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.name",
+              "attributes": {}
+            },
+            "typedAs:public.users.name->type.varchar": {
+              "type": "typedAs",
+              "source": "public.users.name",
+              "target": "type.varchar",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+              "type": "hasConstraint",
+              "source": "public.users.id",
+              "target": "public.users.primary_key_users_id",
+              "attributes": {}
+            }
+          }
+        }
+      },
+      "BA": {
+        "order": "BA",
+        "is_constructed": true,
+        "error_message": null,
+        "invariant_violations": [],
+        "conflicts": [],
+        "graph": {
+          "vertices": {
+            "public.users": {
+              "type": "Table",
+              "name": "users",
+              "attributes": {
+                "schema": "public",
+                "name": "users"
+              }
+            },
+            "public.users.id": {
+              "type": "Column",
+              "name": "id",
+              "attributes": {
+                "table": "users",
+                "schema": "public",
+                "data_type": "integer",
+                "data_type_raw": "int",
+                "nullable": false,
+                "name": "id"
+              }
+            },
+            "type.integer": {
+              "type": "DataType",
+              "name": "integer",
+              "attributes": {
+                "builtin": true,
+                "name": "integer"
+              }
+            },
+            "type.varchar": {
+              "type": "DataType",
+              "name": "varchar",
+              "attributes": {
+                "builtin": true,
+                "name": "varchar"
+              }
+            },
+            "public.users.name": {
+              "type": "Column",
+              "name": "name",
+              "attributes": {
+                "table": "users",
+                "data_type_raw": "varchar(255)",
+                "schema": "public",
+                "nullable": true,
+                "data_type": "varchar",
+                "name": "name"
+              }
+            },
+            "public.users.primary_key_users_id": {
+              "type": "Constraint",
+              "name": "primary_key_users_id",
+              "attributes": {
+                "table": "users",
+                "schema": "public",
+                "columns": "id",
+                "constraint_type": "PRIMARY_KEY",
+                "name": "primary_key_users_id"
+              }
+            },
+            "public.users.unique_users_email": {
+              "type": "Constraint",
+              "name": "unique_users_email",
+              "attributes": {
+                "name": "unique_users_email",
+                "columns": "email",
+                "table": "users",
+                "schema": "public",
+                "constraint_type": "UNIQUE"
+              }
+            }
+          },
+          "edges": {
+            "contains:public.users->public.users.id": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.id",
+              "attributes": {}
+            },
+            "typedAs:public.users.id->type.integer": {
+              "type": "typedAs",
+              "source": "public.users.id",
+              "target": "type.integer",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.name": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.name",
+              "attributes": {}
+            },
+            "typedAs:public.users.name->type.varchar": {
+              "type": "typedAs",
+              "source": "public.users.name",
+              "target": "type.varchar",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+              "type": "hasConstraint",
+              "source": "public.users.id",
+              "target": "public.users.primary_key_users_id",
+              "attributes": {}
+            }
+          }
+        }
+      }
+    },
+    "merged_graph": {
+      "vertices": {
+        "public.users": {
+          "type": "Table",
+          "name": "users",
+          "attributes": {
+            "schema": "public",
+            "name": "users"
+          }
+        },
+        "public.users.id": {
+          "type": "Column",
+          "name": "id",
+          "attributes": {
+            "table": "users",
+            "schema": "public",
+            "data_type": "integer",
+            "data_type_raw": "int",
+            "nullable": false,
+            "name": "id"
+          }
+        },
+        "type.integer": {
+          "type": "DataType",
+          "name": "integer",
+          "attributes": {
+            "builtin": true,
+            "name": "integer"
+          }
+        },
+        "type.varchar": {
+          "type": "DataType",
+          "name": "varchar",
+          "attributes": {
+            "builtin": true,
+            "name": "varchar"
+          }
+        },
+        "public.users.name": {
+          "type": "Column",
+          "name": "name",
+          "attributes": {
+            "table": "users",
+            "data_type_raw": "varchar(255)",
+            "schema": "public",
+            "nullable": true,
+            "data_type": "varchar",
+            "name": "name"
+          }
+        },
+        "public.users.primary_key_users_id": {
+          "type": "Constraint",
+          "name": "primary_key_users_id",
+          "attributes": {
+            "table": "users",
+            "schema": "public",
+            "columns": "id",
+            "constraint_type": "PRIMARY_KEY",
+            "name": "primary_key_users_id"
+          }
+        },
+        "public.users.unique_users_email": {
+          "type": "Constraint",
+          "name": "unique_users_email",
+          "attributes": {
+            "name": "unique_users_email",
+            "columns": "email",
+            "table": "users",
+            "schema": "public",
+            "constraint_type": "UNIQUE"
+          }
+        }
+      },
+      "edges": {
+        "contains:public.users->public.users.id": {
+          "type": "contains",
+          "source": "public.users",
+          "target": "public.users.id",
+          "attributes": {}
+        },
+        "typedAs:public.users.id->type.integer": {
+          "type": "typedAs",
+          "source": "public.users.id",
+          "target": "type.integer",
+          "attributes": {}
+        },
+        "contains:public.users->public.users.name": {
+          "type": "contains",
+          "source": "public.users",
+          "target": "public.users.name",
+          "attributes": {}
+        },
+        "typedAs:public.users.name->type.varchar": {
+          "type": "typedAs",
+          "source": "public.users.name",
+          "target": "type.varchar",
+          "attributes": {}
+        },
+        "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+          "type": "hasConstraint",
+          "source": "public.users.id",
+          "target": "public.users.primary_key_users_id",
+          "attributes": {}
+        }
+      }
+    }
+  },
+  "conflicts_grouped": {
+    "by_rule": {
+      "C2_DROP_COLUMN_VS_ADD_CONSTRAINT": [
+        {
+          "rule_id": "C2_DROP_COLUMN_VS_ADD_CONSTRAINT",
+          "message": "Column is dropped in one branch while a constraint depending on this column is added in another branch.",
+          "object_ids": [
+            "public.users.email",
+            "public.users.unique_users_email"
+          ],
+          "severity": "HIGH",
+          "operation_a": {
+            "target": "public.users.email",
+            "operation_type": "Drop"
+          },
+          "operation_b": {
+            "target": "public.users.unique_users_email",
+            "params": {
+              "columns": "email",
+              "constraint_type": "UNIQUE",
+              "name": "unique_users_email",
+              "object_type": "Constraint",
+              "schema": "public",
+              "table": "users"
+            },
+            "operation_type": "Add"
+          },
+          "metadata": {
+            "base_severity": "HIGH",
+            "constraint_column": "email",
+            "constraint_id": "public.users.unique_users_email",
+            "dropped_column_id": "public.users.email",
+            "evaluated_severity": "HIGH",
+            "impact_size": 2,
+            "operation_a_type": "DropOperation",
+            "operation_b_type": "AddOperation"
+          }
+        }
+      ]
+    },
+    "by_severity": {
+      "HIGH": [
+        {
+          "rule_id": "C2_DROP_COLUMN_VS_ADD_CONSTRAINT",
+          "message": "Column is dropped in one branch while a constraint depending on this column is added in another branch.",
+          "object_ids": [
+            "public.users.email",
+            "public.users.unique_users_email"
+          ],
+          "severity": "HIGH",
+          "operation_a": {
+            "target": "public.users.email",
+            "operation_type": "Drop"
+          },
+          "operation_b": {
+            "target": "public.users.unique_users_email",
+            "params": {
+              "columns": "email",
+              "constraint_type": "UNIQUE",
+              "name": "unique_users_email",
+              "object_type": "Constraint",
+              "schema": "public",
+              "table": "users"
+            },
+            "operation_type": "Add"
+          },
+          "metadata": {
+            "base_severity": "HIGH",
+            "constraint_column": "email",
+            "constraint_id": "public.users.unique_users_email",
+            "dropped_column_id": "public.users.email",
+            "evaluated_severity": "HIGH",
+            "impact_size": 2,
+            "operation_a_type": "DropOperation",
+            "operation_b_type": "AddOperation"
+          }
+        }
+      ]
+    }
+  },
+  "severity_distribution": {
+    "LOW": 0,
+    "MEDIUM": 0,
+    "HIGH": 1,
+    "CRITICAL": 0
+  },
+  "summary": {
+    "total_rule_conflicts": 1,
+    "total_merge_conflicts": 0,
+    "total_conflicts": 1,
+    "critical_conflicts": 0,
+    "high_conflicts": 1,
+    "medium_conflicts": 0,
+    "low_conflicts": 0,
+    "merge_defined": true,
+    "merge_blocked": true,
+    "is_commutative": true,
+    "invariant_violations_count": 0,
+    "has_any_conflicts": true,
+    "has_critical": false
+  }
+}
