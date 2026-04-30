@@ -1,0 +1,577 @@
+{
+  "metadata": {
+    "timestamp": "2026-04-30T21:39:16.763804+00:00",
+    "repo": ".",
+    "branch_a": "test-a",
+    "branch_b": "test-b",
+    "execution_time_seconds": 0.8600501999999999,
+    "impact_threshold": 5
+  },
+  "operations_a": [],
+  "operations_b": [],
+  "rule_conflicts": [],
+  "interference": {
+    "total_pairs": 0,
+    "pairs": []
+  },
+  "merge_attempt": {
+    "is_defined": false,
+    "error_message": "Merge is undefined: at least one composition order cannot be constructed or violates schema invariants.",
+    "is_commutative": true,
+    "invariant_violations": [
+      {
+        "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+        "message": "Column must have exactly one data type.",
+        "object_ids": [
+          "public.users.email"
+        ]
+      }
+    ],
+    "merge_conflicts": [
+      {
+        "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+        "message": "Column must have exactly one data type.",
+        "object_ids": [
+          "public.users.email"
+        ],
+        "severity": "CRITICAL",
+        "operation_a": null,
+        "operation_b": null,
+        "metadata": {
+          "base_severity": "CRITICAL",
+          "evaluated_severity": "CRITICAL",
+          "impact_size": 1,
+          "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+          "kind": "invariant_violation"
+        }
+      },
+      {
+        "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+        "message": "Column must have exactly one data type.",
+        "object_ids": [
+          "public.users.email"
+        ],
+        "severity": "CRITICAL",
+        "operation_a": null,
+        "operation_b": null,
+        "metadata": {
+          "base_severity": "CRITICAL",
+          "evaluated_severity": "CRITICAL",
+          "impact_size": 1,
+          "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+          "kind": "invariant_violation"
+        }
+      }
+    ],
+    "paths": {
+      "AB": {
+        "order": "AB",
+        "is_constructed": true,
+        "error_message": "Merge path AB violates schema invariants.",
+        "invariant_violations": [
+          {
+            "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+            "message": "Column must have exactly one data type.",
+            "object_ids": [
+              "public.users.email"
+            ]
+          }
+        ],
+        "conflicts": [
+          {
+            "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+            "message": "Column must have exactly one data type.",
+            "object_ids": [
+              "public.users.email"
+            ],
+            "severity": "CRITICAL",
+            "operation_a": null,
+            "operation_b": null,
+            "metadata": {
+              "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+              "kind": "invariant_violation"
+            }
+          }
+        ],
+        "graph": {
+          "vertices": {
+            "public.users": {
+              "type": "Table",
+              "name": "users",
+              "attributes": {
+                "name": "users",
+                "schema": "public"
+              }
+            },
+            "public.users.id": {
+              "type": "Column",
+              "name": "id",
+              "attributes": {
+                "schema": "public",
+                "name": "id",
+                "data_type_raw": "int",
+                "nullable": false,
+                "data_type": "integer",
+                "table": "users"
+              }
+            },
+            "type.integer": {
+              "type": "DataType",
+              "name": "integer",
+              "attributes": {
+                "name": "integer",
+                "builtin": true
+              }
+            },
+            "public.users.email": {
+              "type": "Column",
+              "name": "email",
+              "attributes": {
+                "schema": "public",
+                "data_type": "varchar",
+                "data_type_raw": "varchar(255)",
+                "nullable": true,
+                "name": "email",
+                "table": "users"
+              }
+            },
+            "type.varchar": {
+              "type": "DataType",
+              "name": "varchar",
+              "attributes": {
+                "builtin": true,
+                "name": "varchar"
+              }
+            },
+            "public.users.name": {
+              "type": "Column",
+              "name": "name",
+              "attributes": {
+                "schema": "public",
+                "data_type": "varchar",
+                "data_type_raw": "varchar(255)",
+                "nullable": true,
+                "name": "name",
+                "table": "users"
+              }
+            },
+            "public.users.primary_key_users_id": {
+              "type": "Constraint",
+              "name": "primary_key_users_id",
+              "attributes": {
+                "schema": "public",
+                "constraint_type": "PRIMARY_KEY",
+                "name": "primary_key_users_id",
+                "columns": "id",
+                "table": "users"
+              }
+            },
+            "public.users.unique_users_email": {
+              "type": "Constraint",
+              "name": "unique_users_email",
+              "attributes": {
+                "schema": "public",
+                "name": "unique_users_email",
+                "columns": "email",
+                "constraint_type": "UNIQUE",
+                "table": "users"
+              }
+            },
+            "type.text": {
+              "type": "DataType",
+              "name": "text",
+              "attributes": {
+                "builtin": true,
+                "name": "text"
+              }
+            },
+            "public.users.email_address": {
+              "type": "Column",
+              "name": "email_address",
+              "attributes": {
+                "schema": "public",
+                "data_type": "text",
+                "name": "email_address",
+                "data_type_raw": "text",
+                "nullable": false,
+                "table": "users"
+              }
+            }
+          },
+          "edges": {
+            "contains:public.users->public.users.id": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.id",
+              "attributes": {}
+            },
+            "typedAs:public.users.id->type.integer": {
+              "type": "typedAs",
+              "source": "public.users.id",
+              "target": "type.integer",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.email": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.email",
+              "attributes": {}
+            },
+            "typedAs:public.users.email->type.varchar": {
+              "type": "typedAs",
+              "source": "public.users.email",
+              "target": "type.varchar",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.name": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.name",
+              "attributes": {}
+            },
+            "typedAs:public.users.name->type.varchar": {
+              "type": "typedAs",
+              "source": "public.users.name",
+              "target": "type.varchar",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+              "type": "hasConstraint",
+              "source": "public.users.id",
+              "target": "public.users.primary_key_users_id",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.email->public.users.unique_users_email": {
+              "type": "hasConstraint",
+              "source": "public.users.email",
+              "target": "public.users.unique_users_email",
+              "attributes": {}
+            },
+            "typedAs:public.users.email->type.text": {
+              "type": "typedAs",
+              "source": "public.users.email",
+              "target": "type.text",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.email_address": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.email_address",
+              "attributes": {}
+            },
+            "typedAs:public.users.email_address->type.text": {
+              "type": "typedAs",
+              "source": "public.users.email_address",
+              "target": "type.text",
+              "attributes": {}
+            }
+          }
+        }
+      },
+      "BA": {
+        "order": "BA",
+        "is_constructed": true,
+        "error_message": "Merge path BA violates schema invariants.",
+        "invariant_violations": [
+          {
+            "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+            "message": "Column must have exactly one data type.",
+            "object_ids": [
+              "public.users.email"
+            ]
+          }
+        ],
+        "conflicts": [
+          {
+            "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+            "message": "Column must have exactly one data type.",
+            "object_ids": [
+              "public.users.email"
+            ],
+            "severity": "CRITICAL",
+            "operation_a": null,
+            "operation_b": null,
+            "metadata": {
+              "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+              "kind": "invariant_violation"
+            }
+          }
+        ],
+        "graph": {
+          "vertices": {
+            "public.users": {
+              "type": "Table",
+              "name": "users",
+              "attributes": {
+                "name": "users",
+                "schema": "public"
+              }
+            },
+            "public.users.id": {
+              "type": "Column",
+              "name": "id",
+              "attributes": {
+                "schema": "public",
+                "name": "id",
+                "data_type_raw": "int",
+                "nullable": false,
+                "data_type": "integer",
+                "table": "users"
+              }
+            },
+            "type.integer": {
+              "type": "DataType",
+              "name": "integer",
+              "attributes": {
+                "name": "integer",
+                "builtin": true
+              }
+            },
+            "public.users.email": {
+              "type": "Column",
+              "name": "email",
+              "attributes": {
+                "schema": "public",
+                "data_type": "varchar",
+                "data_type_raw": "varchar(255)",
+                "nullable": true,
+                "name": "email",
+                "table": "users"
+              }
+            },
+            "type.varchar": {
+              "type": "DataType",
+              "name": "varchar",
+              "attributes": {
+                "builtin": true,
+                "name": "varchar"
+              }
+            },
+            "public.users.name": {
+              "type": "Column",
+              "name": "name",
+              "attributes": {
+                "schema": "public",
+                "data_type": "varchar",
+                "data_type_raw": "varchar(255)",
+                "nullable": true,
+                "name": "name",
+                "table": "users"
+              }
+            },
+            "public.users.primary_key_users_id": {
+              "type": "Constraint",
+              "name": "primary_key_users_id",
+              "attributes": {
+                "schema": "public",
+                "constraint_type": "PRIMARY_KEY",
+                "name": "primary_key_users_id",
+                "columns": "id",
+                "table": "users"
+              }
+            },
+            "public.users.unique_users_email": {
+              "type": "Constraint",
+              "name": "unique_users_email",
+              "attributes": {
+                "schema": "public",
+                "name": "unique_users_email",
+                "columns": "email",
+                "constraint_type": "UNIQUE",
+                "table": "users"
+              }
+            },
+            "type.text": {
+              "type": "DataType",
+              "name": "text",
+              "attributes": {
+                "builtin": true,
+                "name": "text"
+              }
+            },
+            "public.users.email_address": {
+              "type": "Column",
+              "name": "email_address",
+              "attributes": {
+                "schema": "public",
+                "data_type": "text",
+                "name": "email_address",
+                "data_type_raw": "text",
+                "nullable": false,
+                "table": "users"
+              }
+            }
+          },
+          "edges": {
+            "contains:public.users->public.users.id": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.id",
+              "attributes": {}
+            },
+            "typedAs:public.users.id->type.integer": {
+              "type": "typedAs",
+              "source": "public.users.id",
+              "target": "type.integer",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.email": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.email",
+              "attributes": {}
+            },
+            "typedAs:public.users.email->type.varchar": {
+              "type": "typedAs",
+              "source": "public.users.email",
+              "target": "type.varchar",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.name": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.name",
+              "attributes": {}
+            },
+            "typedAs:public.users.name->type.varchar": {
+              "type": "typedAs",
+              "source": "public.users.name",
+              "target": "type.varchar",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+              "type": "hasConstraint",
+              "source": "public.users.id",
+              "target": "public.users.primary_key_users_id",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.email->public.users.unique_users_email": {
+              "type": "hasConstraint",
+              "source": "public.users.email",
+              "target": "public.users.unique_users_email",
+              "attributes": {}
+            },
+            "typedAs:public.users.email->type.text": {
+              "type": "typedAs",
+              "source": "public.users.email",
+              "target": "type.text",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.email_address": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.email_address",
+              "attributes": {}
+            },
+            "typedAs:public.users.email_address->type.text": {
+              "type": "typedAs",
+              "source": "public.users.email_address",
+              "target": "type.text",
+              "attributes": {}
+            }
+          }
+        }
+      }
+    },
+    "merged_graph": null
+  },
+  "conflicts_grouped": {
+    "by_rule": {
+      "M2_INV_COLUMN_SINGLE_DATATYPE": [
+        {
+          "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+          "message": "Column must have exactly one data type.",
+          "object_ids": [
+            "public.users.email"
+          ],
+          "severity": "CRITICAL",
+          "operation_a": null,
+          "operation_b": null,
+          "metadata": {
+            "base_severity": "CRITICAL",
+            "evaluated_severity": "CRITICAL",
+            "impact_size": 1,
+            "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+            "kind": "invariant_violation"
+          }
+        },
+        {
+          "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+          "message": "Column must have exactly one data type.",
+          "object_ids": [
+            "public.users.email"
+          ],
+          "severity": "CRITICAL",
+          "operation_a": null,
+          "operation_b": null,
+          "metadata": {
+            "base_severity": "CRITICAL",
+            "evaluated_severity": "CRITICAL",
+            "impact_size": 1,
+            "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+            "kind": "invariant_violation"
+          }
+        }
+      ]
+    },
+    "by_severity": {
+      "CRITICAL": [
+        {
+          "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+          "message": "Column must have exactly one data type.",
+          "object_ids": [
+            "public.users.email"
+          ],
+          "severity": "CRITICAL",
+          "operation_a": null,
+          "operation_b": null,
+          "metadata": {
+            "base_severity": "CRITICAL",
+            "evaluated_severity": "CRITICAL",
+            "impact_size": 1,
+            "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+            "kind": "invariant_violation"
+          }
+        },
+        {
+          "rule_id": "M2_INV_COLUMN_SINGLE_DATATYPE",
+          "message": "Column must have exactly one data type.",
+          "object_ids": [
+            "public.users.email"
+          ],
+          "severity": "CRITICAL",
+          "operation_a": null,
+          "operation_b": null,
+          "metadata": {
+            "base_severity": "CRITICAL",
+            "evaluated_severity": "CRITICAL",
+            "impact_size": 1,
+            "invariant_id": "INV_COLUMN_SINGLE_DATATYPE",
+            "kind": "invariant_violation"
+          }
+        }
+      ]
+    }
+  },
+  "severity_distribution": {
+    "LOW": 0,
+    "MEDIUM": 0,
+    "HIGH": 0,
+    "CRITICAL": 2
+  },
+  "summary": {
+    "total_rule_conflicts": 0,
+    "total_merge_conflicts": 2,
+    "total_conflicts": 2,
+    "critical_conflicts": 2,
+    "high_conflicts": 0,
+    "medium_conflicts": 0,
+    "low_conflicts": 0,
+    "merge_defined": false,
+    "merge_blocked": true,
+    "is_commutative": true,
+    "invariant_violations_count": 1,
+    "has_any_conflicts": true,
+    "has_critical": true
+  }
+}

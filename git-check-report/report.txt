@@ -1,0 +1,78 @@
+Schema Merge Conflict Analysis Report
+=====================================
+
+Metadata
+--------
+timestamp: 2026-04-30T21:39:16.765982+00:00
+repo: .
+branch A: test-a
+branch B: test-b
+execution time seconds: 0.8600501999999999
+impact threshold: 5
+
+Operations A
+------------
+No operations.
+
+Operations B
+------------
+No operations.
+
+Rule Conflicts
+--------------
+No rule conflicts.
+
+Merge Attempt
+-------------
+defined: False
+commutative indicator: True
+error: Merge is undefined: at least one composition order cannot be constructed or violates schema invariants.
+
+Path AB
+  constructed: True
+  invariant violations: 1
+  invariant violation details:
+    - INV_COLUMN_SINGLE_DATATYPE: Column must have exactly one data type.; objects=['public.users.email']
+  error: Merge path AB violates schema invariants.
+
+Path BA
+  constructed: True
+  invariant violations: 1
+  invariant violation details:
+    - INV_COLUMN_SINGLE_DATATYPE: Column must have exactly one data type.; objects=['public.users.email']
+  error: Merge path BA violates schema invariants.
+
+Merge-level conflicts and indicators:
+- [CRITICAL] M2_INV_COLUMN_SINGLE_DATATYPE
+  Message: Column must have exactly one data type.
+  Objects: ['public.users.email']
+  Metadata: {'base_severity': 'CRITICAL', 'evaluated_severity': 'CRITICAL', 'impact_size': 1, 'invariant_id': 'INV_COLUMN_SINGLE_DATATYPE', 'kind': 'invariant_violation'}
+
+- [CRITICAL] M2_INV_COLUMN_SINGLE_DATATYPE
+  Message: Column must have exactly one data type.
+  Objects: ['public.users.email']
+  Metadata: {'base_severity': 'CRITICAL', 'evaluated_severity': 'CRITICAL', 'impact_size': 1, 'invariant_id': 'INV_COLUMN_SINGLE_DATATYPE', 'kind': 'invariant_violation'}
+
+
+Severity Distribution
+---------------------
+CRITICAL: 2
+HIGH: 0
+MEDIUM: 0
+LOW: 0
+
+Summary
+-------
+total rule conflicts: 0
+total merge conflicts: 2
+total conflicts: 2
+critical conflicts: 2
+high conflicts: 0
+medium conflicts: 0
+low conflicts: 0
+merge defined: False
+merge blocked: True
+is commutative: True
+invariant violations count: 1
+has any conflicts: True
+has critical conflicts: True
