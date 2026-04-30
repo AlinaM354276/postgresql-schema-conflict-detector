@@ -36,9 +36,9 @@ jobs:
         run: |
           mkdir -p schema-merge-report
           python -m src.conflict_detector.cli \
-            --base base.sql \
-            --a branch_a.sql \
-            --b branch_b.sql \
+            --base base/schema.sql \
+            --a branch_a/schema.sql \
+            --b branch_b/schema.sql \
             --out schema-merge-report \
             --impact-threshold 5
 
