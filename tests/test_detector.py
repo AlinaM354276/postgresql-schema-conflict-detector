@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+from src.conflict_detector.comparison.reconstruct import RenameOperation
 from src.conflict_detector.core.models import (
-    AddOperation,
     DropOperation,
     ModifyOperation,
-    RenameOperation,
     freeze_attrs,
 )
 from src.conflict_detector.detection.detector import detect_conflicts
@@ -15,6 +14,7 @@ from src.conflict_detector.rules.basic_rules import BASIC_RULES
 def build_dummy_graph():
     builder = build_schema_graph()
     builder.add_table("users")
+    builder.add_column("users", "id", data_type="integer", nullable=False)
     builder.add_column("users", "email", data_type="text", nullable=False)
     return builder.build()
 
@@ -23,9 +23,7 @@ def test_detect_drop_vs_modify_conflict():
     graph_a = build_dummy_graph()
     graph_b = build_dummy_graph()
 
-    ops_a = [
-        DropOperation(target="public.users.email"),
-    ]
+    ops_a = [DropOperation(target="public.users.email")]
     ops_b = [
         ModifyOperation(
             target="public.users.email",
@@ -49,9 +47,7 @@ def test_detect_drop_vs_rename_conflict():
     graph_a = build_dummy_graph()
     graph_b = build_dummy_graph()
 
-    ops_a = [
-        DropOperation(target="public.users.email"),
-    ]
+    ops_a = [DropOperation(target="public.users.email")]
     ops_b = [
         RenameOperation(
             target="public.users.email",
@@ -129,7 +125,7 @@ def test_detect_modify_vs_modify_conflict():
     assert result.conflicts[0].rule_id == "R4_MODIFY_VS_MODIFY"
 
 
-def test_detect_rename_vs_modify_conflict():
+def test_detect_no_conflict_for_rename_vs_non_identity_modify():
     graph_a = build_dummy_graph()
     graph_b = build_dummy_graph()
 
@@ -154,8 +150,7 @@ def test_detect_rename_vs_modify_conflict():
         rules=BASIC_RULES,
     )
 
-    assert len(result.conflicts) == 1
-    assert result.conflicts[0].rule_id == "R6_RENAME_VS_MODIFY"
+    assert len(result.conflicts) == 0
 
 
 def test_detect_no_conflict_for_identical_modify():

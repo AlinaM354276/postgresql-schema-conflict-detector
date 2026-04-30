@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from src.conflict_detector.core.models import SchemaEdge, SchemaObject
+from src.conflict_detector.core.models import ObjectType, SchemaObject
 from src.conflict_detector.graph.schema_graph import SchemaGraph
 
 
@@ -52,10 +52,10 @@ class MatchingResult:
 def comparable_attributes(left: SchemaObject, right: SchemaObject) -> bool:
     """
     Атрибутивная сопоставимость.
-    Здесь intentionally мягкий критерий:
-    - тип объекта должен совпадать
-    - сравниваются все атрибуты, кроме name, owner, table, schema
-      (они могут меняться при rename / перемещении модели)
+
+    Мягкий критерий:
+    - тип объекта должен совпадать;
+    - сравниваются все атрибуты, кроме идентифицирующих/контекстных.
     """
     if left.object_type != right.object_type:
         return False
@@ -71,12 +71,37 @@ def comparable_attributes(left: SchemaObject, right: SchemaObject) -> bool:
     return left_attrs == right_attrs
 
 
-def strong_name_key(obj: SchemaObject) -> Tuple[str, str]:
+def stable_owner_key(obj: SchemaObject) -> str:
+    """
+    Возвращает контекст объекта для strong matching.
+
+    Проблема старого варианта:
+    (Column, id) ошибочно склеивал users.id и orders.id.
+
+    Поэтому для колонок, ограничений и индексов учитывается table/schema-контекст.
+    """
+    attrs = obj.attr_dict()
+
+    if obj.object_type in {ObjectType.COLUMN, ObjectType.CONSTRAINT, ObjectType.INDEX}:
+        schema = str(attrs.get("schema", ""))
+        table = str(attrs.get("table", ""))
+        return f"{schema}.{table}"
+
+    if obj.object_type == ObjectType.TABLE:
+        return str(attrs.get("schema", ""))
+
+    return ""
+
+
+def strong_name_key(obj: SchemaObject) -> Tuple[str, str, str]:
     """
     Сильный ключ для очевидного matching:
-    (тип, имя)
+    (тип, owner/context, имя).
+
+    Это защищает от homonym problem:
+    одинаковые имена в разных таблицах не должны считаться одним объектом.
     """
-    return obj.object_type.value, obj.name
+    return obj.object_type.value, stable_owner_key(obj), obj.name
 
 
 def structure_signature(
@@ -85,12 +110,10 @@ def structure_signature(
 ) -> Tuple[str, str, Tuple[str, ...], Tuple[str, ...]]:
     """
     Структурная сигнатура объекта:
-    - тип объекта
-    - имя
-    - типы входящих рёбер
-    - типы исходящих рёбер
-
-    Это упрощённая форма structure-level matching.
+    - тип объекта;
+    - имя;
+    - типы входящих рёбер;
+    - типы исходящих рёбер.
     """
     obj = graph.get_vertex(object_id)
     if obj is None:
@@ -121,10 +144,8 @@ def edge_signature(
     Возвращает сигнатуру ребра, приведённую к уже сопоставленным вершинам.
 
     side:
-    - "left": source/target должны быть сопоставлены в right ids
-    - "right": source/target должны быть сопоставлены в left ids
-
-    Если вершины для данного ребра ещё не сопоставлены, вернуть None.
+    - left: source/target должны быть сопоставлены в right ids;
+    - right: source/target должны быть сопоставлены в left ids.
     """
     edge = graph.get_edge(edge_id)
     if edge is None:
@@ -151,23 +172,22 @@ def match_vertices(
 ) -> MatchingResult:
     """
     Сопоставление вершин:
-    1. Сначала по сильному ключу (type + name)
-    2. Затем по структурно-атрибутивной совместимости
-       — это позволяет потенциально ловить rename-кандидатов.
+    1. strong matching по (type, owner/context, name);
+    2. мягкое structure/attribute matching для rename-кандидатов.
     """
     result = MatchingResult()
 
     left_vertices = list(left_graph.vertices.values())
     right_vertices = list(right_graph.vertices.values())
 
-    # Шаг 1: очевидные совпадения по (type, name)
-    right_by_strong_key: Dict[Tuple[str, str], List[str]] = {}
+    right_by_strong_key: Dict[Tuple[str, str, str], List[str]] = {}
     for obj in right_vertices:
         right_by_strong_key.setdefault(strong_name_key(obj), []).append(obj.object_id)
 
     for left_obj in left_vertices:
         key = strong_name_key(left_obj)
         candidates = right_by_strong_key.get(key, [])
+
         if len(candidates) == 1:
             candidate_id = candidates[0]
             if not result.is_matched_right(candidate_id):
@@ -175,16 +195,21 @@ def match_vertices(
                 if right_obj is not None:
                     result.add(left_obj.object_id, candidate_id)
 
-    # Шаг 2: мягкое сопоставление для rename-подобных случаев
-    unmatched_left = [v for v in left_vertices if not result.is_matched_left(v.object_id)]
+    unmatched_left = [
+        vertex
+        for vertex in left_vertices
+        if not result.is_matched_left(vertex.object_id)
+    ]
     unmatched_right = [
-        v for v in right_vertices if not result.is_matched_right(v.object_id)
+        vertex
+        for vertex in right_vertices
+        if not result.is_matched_right(vertex.object_id)
     ]
 
     for left_obj in unmatched_left:
         candidates: List[SchemaObject] = []
-
         left_sig = structure_signature(left_graph, left_obj.object_id)
+        left_owner = stable_owner_key(left_obj)
 
         for right_obj in unmatched_right:
             if result.is_matched_right(right_obj.object_id):
@@ -193,13 +218,14 @@ def match_vertices(
             if left_obj.object_type != right_obj.object_type:
                 continue
 
+            if stable_owner_key(right_obj) != left_owner:
+                continue
+
             if not comparable_attributes(left_obj, right_obj):
                 continue
 
             right_sig = structure_signature(right_graph, right_obj.object_id)
 
-            # Для rename допускаем различие только в имени,
-            # но требуем совпадение по типу и edge-type структуре
             if (
                 left_sig[0] == right_sig[0]
                 and left_sig[2] == right_sig[2]
@@ -222,8 +248,8 @@ def match_edges(
     Сопоставление рёбер выполняется после сопоставления вершин.
 
     Рёбра сопоставляются по:
-    - типу ребра
-    - уже сопоставленным source/target
+    - типу ребра;
+    - уже сопоставленным source/target.
     """
     result = MatchingResult()
 
@@ -250,6 +276,7 @@ def match_edges(
             continue
 
         candidates = right_edge_index.get(sig, [])
+
         if len(candidates) == 1:
             candidate_id = candidates[0]
             if not result.is_matched_right(candidate_id):
@@ -282,8 +309,8 @@ def build_matching(
 ) -> FullMatchingResult:
     """
     Полное matching двух графов:
-    1. match vertices
-    2. match edges
+    1. match vertices;
+    2. match edges.
     """
     vertex_matching = match_vertices(left_graph, right_graph)
     edge_matching = match_edges(left_graph, right_graph, vertex_matching)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable
 
 from src.conflict_detector.core.models import (
     AddOperation,
@@ -10,18 +10,22 @@ from src.conflict_detector.core.models import (
     ModifyOperation,
     ObjectType,
     Operation,
+    ReferenceChangeType,
+    ReferenceOperation,
     RenameOperation,
     SchemaEdge,
     SchemaObject,
     freeze_attrs,
 )
+from src.conflict_detector.graph.builders import (
+    build_data_type,
+    canonical_data_type_name,
+    make_data_type_id,
+)
 from src.conflict_detector.graph.schema_graph import SchemaGraph
 
 
 def clone_graph(graph: SchemaGraph) -> SchemaGraph:
-    """
-    Глубокая копия графа схемы.
-    """
     return deepcopy(graph)
 
 
@@ -37,6 +41,13 @@ def attrs_with_delta(obj: SchemaObject, delta: Dict[str, object]) -> Dict[str, o
     return attrs
 
 
+def is_builtin_data_type_object(obj: SchemaObject) -> bool:
+    return (
+        obj.object_type == ObjectType.DATA_TYPE
+        and obj.attr_dict().get("builtin") is True
+    )
+
+
 def rebuild_object(
     original: SchemaObject,
     *,
@@ -44,9 +55,6 @@ def rebuild_object(
     new_name: str | None = None,
     new_attrs: Dict[str, object] | None = None,
 ) -> SchemaObject:
-    """
-    Перестраивает объект того же класса с обновлёнными полями.
-    """
     object_id = new_object_id if new_object_id is not None else original.object_id
     name = new_name if new_name is not None else original.name
     attrs = new_attrs if new_attrs is not None else original.attr_dict()
@@ -67,9 +75,6 @@ def rebuild_edge(
     new_target_id: str | None = None,
     new_attrs: Dict[str, object] | None = None,
 ) -> SchemaEdge:
-    """
-    Перестраивает ребро с обновлёнными полями.
-    """
     edge_id = new_edge_id if new_edge_id is not None else original.edge_id
     source_id = new_source_id if new_source_id is not None else original.source_id
     target_id = new_target_id if new_target_id is not None else original.target_id
@@ -85,10 +90,6 @@ def rebuild_edge(
 
 
 def parse_object_type(value: str) -> ObjectType:
-    """
-    Преобразование строки в ObjectType.
-    Поддерживает значения вида 'Table'/'COLUMN' и т.п.
-    """
     for item in ObjectType:
         if item.value == value or item.name == value:
             return item
@@ -103,12 +104,6 @@ def parse_edge_type(value: str) -> EdgeType:
 
 
 def make_schema_object_from_add(op: AddOperation) -> SchemaObject:
-    """
-    Создаёт SchemaObject из AddOperation.
-    Для вершин ожидает наличие:
-    - object_type
-    - name
-    """
     params = dict(op.params)
 
     object_type_raw = params.pop("object_type", None)
@@ -119,24 +114,17 @@ def make_schema_object_from_add(op: AddOperation) -> SchemaObject:
     if name is None:
         raise ValueError(f"AddOperation for object '{op.target}' misses name")
 
-    object_type = parse_object_type(object_type_raw)
+    object_type = parse_object_type(str(object_type_raw))
 
     return SchemaObject(
         object_id=op.target,
         object_type=object_type,
-        name=name,
+        name=str(name),
         attributes=freeze_attrs(params),
     )
 
 
 def make_schema_edge_from_add(op: AddOperation) -> SchemaEdge:
-    """
-    Создаёт SchemaEdge из AddOperation.
-    Для ребра ожидает:
-    - edge_type
-    - source_id
-    - target_id
-    """
     params = dict(op.params)
 
     edge_type_raw = params.pop("edge_type", None)
@@ -146,13 +134,13 @@ def make_schema_edge_from_add(op: AddOperation) -> SchemaEdge:
     if edge_type_raw is None or source_id is None or target_id is None:
         raise ValueError(f"AddOperation for edge '{op.target}' misses required params")
 
-    edge_type = parse_edge_type(edge_type_raw)
+    edge_type = parse_edge_type(str(edge_type_raw))
 
     return SchemaEdge(
         edge_id=op.target,
         edge_type=edge_type,
-        source_id=source_id,
-        target_id=target_id,
+        source_id=str(source_id),
+        target_id=str(target_id),
         attributes=freeze_attrs(params),
     )
 
@@ -162,15 +150,55 @@ def is_edge_add_operation(op: AddOperation) -> bool:
     return {"edge_type", "source_id", "target_id"}.issubset(set(params.keys()))
 
 
+def ensure_builtin_type_for_typed_as_edge(graph: SchemaGraph, edge: SchemaEdge) -> None:
+    """
+    Если добавляется typedAs-ребро Column -> builtin DataType,
+    а вершины DataType ещё нет, создаём её служебно.
+
+    Это не самостоятельная операция эволюции схемы.
+    """
+    if edge.edge_type != EdgeType.TYPED_AS:
+        return
+
+    if graph.get_vertex(edge.target_id) is not None:
+        return
+
+    if not edge.target_id.startswith("type."):
+        return
+
+    type_name = edge.target_id.removeprefix("type.")
+    graph.add_vertex(build_data_type(type_name))
+
+
 def apply_add_operation(graph: SchemaGraph, op: AddOperation) -> SchemaGraph:
     new_graph = clone_graph(graph)
 
     if is_edge_add_operation(op):
         edge = make_schema_edge_from_add(op)
+
+        ensure_builtin_type_for_typed_as_edge(new_graph, edge)
+
+        existing_edge = new_graph.get_edge(edge.edge_id)
+        if existing_edge is not None:
+            if existing_edge == edge:
+                return new_graph
+            raise ValueError(
+                f"Cannot add duplicate edge with different payload: {edge.edge_id}"
+            )
+
         new_graph.add_edge(edge)
         return new_graph
 
     obj = make_schema_object_from_add(op)
+
+    existing_obj = new_graph.get_vertex(obj.object_id)
+    if existing_obj is not None:
+        if existing_obj == obj:
+            return new_graph
+        raise ValueError(
+            f"Cannot add duplicate object with different payload: {obj.object_id}"
+        )
+
     new_graph.add_vertex(obj)
     return new_graph
 
@@ -182,28 +210,37 @@ def remove_edge_from_indexes(graph: SchemaGraph, edge_id: str, edge: SchemaEdge)
         graph.incoming[edge.target_id].discard(edge_id)
 
 
+def remove_edge(graph: SchemaGraph, edge_id: str) -> None:
+    edge = graph.get_edge(edge_id)
+    if edge is None:
+        return
+
+    remove_edge_from_indexes(graph, edge_id, edge)
+    del graph.edges[edge_id]
+
+
 def apply_drop_operation(graph: SchemaGraph, op: DropOperation) -> SchemaGraph:
     new_graph = clone_graph(graph)
 
-    # Сначала пытаемся удалить ребро
     edge = new_graph.get_edge(op.target)
     if edge is not None:
-        remove_edge_from_indexes(new_graph, op.target, edge)
-        del new_graph.edges[op.target]
+        remove_edge(new_graph, op.target)
         return new_graph
 
-    # Затем удаляем вершину и все инцидентные рёбра
     obj = new_graph.get_vertex(op.target)
     if obj is None:
-        raise ValueError(f"Cannot drop unknown object or edge: {op.target}")
+        return new_graph
 
-    incident_edge_ids = set(new_graph.outgoing.get(op.target, set())) | set(new_graph.incoming.get(op.target, set()))
+    if is_builtin_data_type_object(obj):
+        return new_graph
+
+    incident_edge_ids = (
+        set(new_graph.outgoing.get(op.target, set()))
+        | set(new_graph.incoming.get(op.target, set()))
+    )
+
     for edge_id in list(incident_edge_ids):
-        current_edge = new_graph.get_edge(edge_id)
-        if current_edge is None:
-            continue
-        remove_edge_from_indexes(new_graph, edge_id, current_edge)
-        del new_graph.edges[edge_id]
+        remove_edge(new_graph, edge_id)
 
     new_graph.outgoing.pop(op.target, None)
     new_graph.incoming.pop(op.target, None)
@@ -212,19 +249,68 @@ def apply_drop_operation(graph: SchemaGraph, op: DropOperation) -> SchemaGraph:
     return new_graph
 
 
+def ensure_data_type_vertex(graph: SchemaGraph, data_type: str) -> str:
+    dtype_id = make_data_type_id(data_type)
+    if graph.get_vertex(dtype_id) is None:
+        graph.add_vertex(build_data_type(data_type))
+    return dtype_id
+
+
+def update_column_typed_as_edge(
+    graph: SchemaGraph,
+    column_id: str,
+    new_data_type: str,
+) -> None:
+    canonical_type = canonical_data_type_name(new_data_type)
+    dtype_id = ensure_data_type_vertex(graph, canonical_type)
+
+    outgoing_typed_as = [
+        edge.edge_id
+        for edge in graph.edges_from(column_id)
+        if edge.edge_type == EdgeType.TYPED_AS
+    ]
+
+    for edge_id in outgoing_typed_as:
+        remove_edge(graph, edge_id)
+
+    new_edge = SchemaEdge(
+        edge_id=f"{EdgeType.TYPED_AS.value}:{column_id}->{dtype_id}",
+        edge_type=EdgeType.TYPED_AS,
+        source_id=column_id,
+        target_id=dtype_id,
+        attributes=freeze_attrs({}),
+    )
+    graph.add_edge(new_edge)
+
+
 def apply_modify_operation(graph: SchemaGraph, op: ModifyOperation) -> SchemaGraph:
     new_graph = clone_graph(graph)
 
-    # Сначала пробуем как вершину
     obj = new_graph.get_vertex(op.target)
     if obj is not None:
         delta = dict(op.delta)
+
+        if is_builtin_data_type_object(obj):
+            return new_graph
+
+        if obj.object_type == ObjectType.COLUMN and "data_type" in delta:
+            raw_type = str(delta["data_type"])
+            delta["data_type"] = canonical_data_type_name(raw_type)
+            delta.setdefault("data_type_raw", raw_type)
+
         updated_attrs = attrs_with_delta(obj, delta)
         updated_obj = rebuild_object(obj, new_attrs=updated_attrs)
         new_graph.vertices[op.target] = updated_obj
+
+        if obj.object_type == ObjectType.COLUMN and "data_type" in delta:
+            update_column_typed_as_edge(
+                graph=new_graph,
+                column_id=op.target,
+                new_data_type=str(delta["data_type"]),
+            )
+
         return new_graph
 
-    # Затем как ребро
     edge = new_graph.get_edge(op.target)
     if edge is not None:
         delta = dict(op.delta)
@@ -252,18 +338,19 @@ def replace_edge_indexes_for_rename(
 
 
 def rename_object_id(old_object_id: str, new_name: str) -> str:
-    """
-    Для MVP считаем, что object_id имеет вид qualified.name
-    и rename заменяет только последний сегмент.
-    """
     parts = old_object_id.split(".")
     if not parts:
         raise ValueError(f"Invalid object id: {old_object_id}")
+
     parts[-1] = new_name
     return ".".join(parts)
 
 
-def rename_edge_id_for_vertex(edge: SchemaEdge, old_vertex_id: str, new_vertex_id: str) -> str:
+def rename_edge_id_for_vertex(
+    edge: SchemaEdge,
+    old_vertex_id: str,
+    new_vertex_id: str,
+) -> str:
     return edge.edge_id.replace(old_vertex_id, new_vertex_id)
 
 
@@ -271,10 +358,29 @@ def apply_rename_operation(graph: SchemaGraph, op: RenameOperation) -> SchemaGra
     new_graph = clone_graph(graph)
 
     obj = new_graph.get_vertex(op.target)
+
     if obj is None:
+        new_object_id = rename_object_id(op.target, op.new_name)
+        already_renamed = new_graph.get_vertex(new_object_id)
+
+        if already_renamed is not None:
+            return new_graph
+
         raise ValueError(f"Cannot rename unknown object: {op.target}")
 
+    if is_builtin_data_type_object(obj):
+        return new_graph
+
     new_object_id = rename_object_id(obj.object_id, op.new_name)
+
+    if new_object_id != obj.object_id and new_graph.get_vertex(new_object_id) is not None:
+        existing = new_graph.get_vertex(new_object_id)
+        if existing is not None and existing.name == op.new_name:
+            return new_graph
+        raise ValueError(
+            f"Cannot rename '{obj.object_id}' to existing object '{new_object_id}'"
+        )
+
     new_attrs = attrs_with_updated_name(obj, op.new_name)
     renamed_obj = rebuild_object(
         obj,
@@ -283,8 +389,10 @@ def apply_rename_operation(graph: SchemaGraph, op: RenameOperation) -> SchemaGra
         new_attrs=new_attrs,
     )
 
-    # Собираем инцидентные рёбра
-    incident_edge_ids = set(new_graph.outgoing.get(obj.object_id, set())) | set(new_graph.incoming.get(obj.object_id, set()))
+    incident_edge_ids = (
+        set(new_graph.outgoing.get(obj.object_id, set()))
+        | set(new_graph.incoming.get(obj.object_id, set()))
+    )
     updated_edges: list[tuple[str, SchemaEdge]] = []
 
     for edge_id in incident_edge_ids:
@@ -292,15 +400,14 @@ def apply_rename_operation(graph: SchemaGraph, op: RenameOperation) -> SchemaGra
         if edge is None:
             continue
 
-        new_source_id = edge.source_id
-        new_target_id = edge.target_id
+        new_source_id = new_object_id if edge.source_id == obj.object_id else edge.source_id
+        new_target_id = new_object_id if edge.target_id == obj.object_id else edge.target_id
+        new_edge_id = rename_edge_id_for_vertex(
+            edge=edge,
+            old_vertex_id=obj.object_id,
+            new_vertex_id=new_object_id,
+        )
 
-        if edge.source_id == obj.object_id:
-            new_source_id = new_object_id
-        if edge.target_id == obj.object_id:
-            new_target_id = new_object_id
-
-        new_edge_id = rename_edge_id_for_vertex(edge, obj.object_id, new_object_id)
         updated_edge = rebuild_edge(
             edge,
             new_edge_id=new_edge_id,
@@ -309,21 +416,51 @@ def apply_rename_operation(graph: SchemaGraph, op: RenameOperation) -> SchemaGra
         )
         updated_edges.append((edge_id, updated_edge))
 
-    # Удаляем старую вершину
     del new_graph.vertices[obj.object_id]
     new_graph.outgoing.pop(obj.object_id, None)
     new_graph.incoming.pop(obj.object_id, None)
 
-    # Добавляем новую
     new_graph.vertices[new_object_id] = renamed_obj
     new_graph.outgoing.setdefault(new_object_id, set())
     new_graph.incoming.setdefault(new_object_id, set())
 
-    # Обновляем рёбра
     for old_edge_id, updated_edge in updated_edges:
         replace_edge_indexes_for_rename(new_graph, old_edge_id, updated_edge)
 
     return new_graph
+
+
+def make_reference_edge_id(source_id: str, target_id: str) -> str:
+    return f"{EdgeType.REFERENCES.value}:{source_id}->{target_id}"
+
+
+def apply_reference_operation(graph: SchemaGraph, op: ReferenceOperation) -> SchemaGraph:
+    new_graph = clone_graph(graph)
+    edge_id = make_reference_edge_id(op.source, op.target)
+
+    if op.change_type == ReferenceChangeType.ADD:
+        existing = new_graph.get_edge(edge_id)
+        if existing is not None:
+            return new_graph
+
+        edge = SchemaEdge(
+            edge_id=edge_id,
+            edge_type=EdgeType.REFERENCES,
+            source_id=op.source,
+            target_id=op.target,
+            attributes=freeze_attrs({}),
+        )
+        new_graph.add_edge(edge)
+        return new_graph
+
+    if op.change_type == ReferenceChangeType.DROP:
+        remove_edge(new_graph, edge_id)
+        return new_graph
+
+    if op.change_type == ReferenceChangeType.RETARGET:
+        raise NotImplementedError("Reference retarget is not implemented yet.")
+
+    raise ValueError(f"Unknown reference change type: {op.change_type}")
 
 
 def apply_operation(graph: SchemaGraph, op: Operation) -> SchemaGraph:
@@ -335,6 +472,8 @@ def apply_operation(graph: SchemaGraph, op: Operation) -> SchemaGraph:
         return apply_modify_operation(graph, op)
     if isinstance(op, RenameOperation):
         return apply_rename_operation(graph, op)
+    if isinstance(op, ReferenceOperation):
+        return apply_reference_operation(graph, op)
 
     raise NotImplementedError(f"Unsupported operation type: {type(op).__name__}")
 

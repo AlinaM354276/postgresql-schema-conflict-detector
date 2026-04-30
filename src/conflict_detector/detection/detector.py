@@ -1,44 +1,209 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable, List, Set, Tuple
+from dataclasses import dataclass
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 from src.conflict_detector.core.models import Conflict, Operation
 from src.conflict_detector.graph.schema_graph import SchemaGraph
-from src.conflict_detector.rules.base import ConflictRule, RuleContext
+from src.conflict_detector.rules.base import ConflictRule, RuleContext, RuleCheckResult
 from src.conflict_detector.rules.registry import DEFAULT_RULES
+from src.conflict_detector.semantics.dependency import (
+    compute_transitive_closure,
+    explain_dependency_intersection,
+    merge_dependency_graphs,
+)
+from src.conflict_detector.semantics.impact import (
+    compute_impact_map,
+    impact_of,
+    impacts_intersect,
+)
+
+try:
+    from src.conflict_detector.semantics.operation_compatibility import (
+        operations_are_semantically_compatible,
+    )
+except Exception:
+    operations_are_semantically_compatible = None
+
+
+@dataclass(frozen=True)
+class InterferencePair:
+    operation_a: Operation
+    operation_b: Operation
+    shared_impact: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class DetectionResult:
     conflicts: Tuple[Conflict, ...]
+    interference_pairs: Tuple[InterferencePair, ...] = tuple()
 
-    def __iter__(self):
-        return iter(self.conflicts)
-
-    def __len__(self) -> int:
-        return len(self.conflicts)
-
-    def is_empty(self) -> bool:
-        return len(self.conflicts) == 0
+    def has_conflicts(self) -> bool:
+        return bool(self.conflicts)
 
 
-def conflict_key(conflict: Conflict) -> Tuple[str, Tuple[str, ...], str]:
-    """
-    Ключ для дедупликации конфликтов.
+ConflictDetectionResult = DetectionResult
 
-    Используем:
-    - rule_id
-    - object_ids
-    - message
 
-    Пока этого достаточно для MVP.
-    """
+def conflict_key(conflict: Conflict) -> Tuple[str, Tuple[str, ...], str, str]:
+    op_a_type = type(conflict.operation_a).__name__ if conflict.operation_a else ""
+    op_b_type = type(conflict.operation_b).__name__ if conflict.operation_b else ""
+
     return (
         conflict.rule_id,
         tuple(sorted(conflict.object_ids)),
-        conflict.message,
+        op_a_type,
+        op_b_type,
     )
+
+
+def should_skip_as_semantically_compatible(
+    operation_a: Operation,
+    operation_b: Operation,
+) -> bool:
+    if operations_are_semantically_compatible is None:
+        return False
+
+    compatibility = operations_are_semantically_compatible(
+        operation_a,
+        operation_b,
+    )
+    return compatibility.is_compatible
+
+
+def iter_rule_conflicts(result: RuleCheckResult) -> Tuple[Conflict, ...]:
+    if hasattr(result, "conflicts"):
+        conflicts = getattr(result, "conflicts")
+        if conflicts is None:
+            return tuple()
+        return tuple(conflicts)
+
+    if hasattr(result, "conflict"):
+        conflict = getattr(result, "conflict")
+        if conflict is None:
+            return tuple()
+        return (conflict,)
+
+    return tuple()
+
+
+def _as_tuple(operations: Iterable[Operation]) -> Tuple[Operation, ...]:
+    if isinstance(operations, tuple):
+        return operations
+    return tuple(operations)
+
+
+def compute_interference_pairs(
+    operations_a: Sequence[Operation],
+    operations_b: Sequence[Operation],
+    impact_map: dict[int, object],
+) -> Tuple[InterferencePair, ...]:
+    pairs: List[InterferencePair] = []
+
+    for op_a in operations_a:
+        for op_b in operations_b:
+            shared = impacts_intersect(impact_map, op_a, op_b)
+
+            if shared:
+                pairs.append(
+                    InterferencePair(
+                        operation_a=op_a,
+                        operation_b=op_b,
+                        shared_impact=tuple(sorted(shared)),
+                    )
+                )
+
+    return tuple(pairs)
+
+
+class ConflictDetector:
+    """
+    Реализация DetectConflicts(ΔA, ΔB):
+
+    1. dep
+    2. dep*
+    3. impact(op)
+    4. interfere
+    5. rule checking
+    """
+
+    def __init__(
+        self,
+        rules: Optional[Sequence[ConflictRule]] = None,
+    ) -> None:
+        self.rules: Tuple[ConflictRule, ...] = tuple(rules or DEFAULT_RULES)
+
+    def detect(
+        self,
+        operations_a: Iterable[Operation],
+        operations_b: Iterable[Operation],
+        graph_a: SchemaGraph,
+        graph_b: SchemaGraph,
+    ) -> DetectionResult:
+        ops_a = _as_tuple(operations_a)
+        ops_b = _as_tuple(operations_b)
+
+        dep = merge_dependency_graphs(graph_a, graph_b)
+        dep_closure = compute_transitive_closure(dep)
+
+        all_operations = (*ops_a, *ops_b)
+        impact_map = compute_impact_map(all_operations, dep_closure)
+
+        interference_pairs = compute_interference_pairs(
+            operations_a=ops_a,
+            operations_b=ops_b,
+            impact_map=impact_map,
+        )
+
+        conflicts: List[Conflict] = []
+        seen: Set[Tuple[str, Tuple[str, ...], str, str]] = set()
+
+        for operation_a in ops_a:
+            for operation_b in ops_b:
+                if should_skip_as_semantically_compatible(operation_a, operation_b):
+                    continue
+
+                shared_impact = tuple(
+                    sorted(impacts_intersect(impact_map, operation_a, operation_b))
+                )
+
+                impact_a = impact_of(impact_map, operation_a)
+                impact_b = impact_of(impact_map, operation_b)
+
+                dependency_trace = explain_dependency_intersection(
+                    dep=dep,
+                    sources_a=impact_a.targets,
+                    sources_b=impact_b.targets,
+                    intersection=shared_impact,
+                )
+
+                context = RuleContext(
+                    operation_a=operation_a,
+                    operation_b=operation_b,
+                    graph_a=graph_a,
+                    graph_b=graph_b,
+                    base_graph=None,
+                    impact_a=impact_a,
+                    impact_b=impact_b,
+                    shared_impact=shared_impact,
+                    dependency_trace=dependency_trace,
+                )
+
+                for rule in self.rules:
+                    check_result = rule.check(context)
+
+                    for conflict in iter_rule_conflicts(check_result):
+                        key = conflict_key(conflict)
+                        if key in seen:
+                            continue
+
+                        seen.add(key)
+                        conflicts.append(conflict)
+
+        return DetectionResult(
+            conflicts=tuple(conflicts),
+            interference_pairs=interference_pairs,
+        )
 
 
 def detect_conflicts(
@@ -46,44 +211,15 @@ def detect_conflicts(
     operations_b: Iterable[Operation],
     graph_a: SchemaGraph,
     graph_b: SchemaGraph,
-    rules: Iterable[ConflictRule] | None = None,
+    rules: Optional[Iterable[ConflictRule]] = None,
 ) -> DetectionResult:
-    """
-    Главная функция обнаружения конфликтов.
+    detector = ConflictDetector(
+        rules=tuple(rules) if rules is not None else None,
+    )
 
-    Алгоритм MVP:
-    1. перебираем все пары операций из двух веток
-    2. применяем все правила
-    3. собираем найденные конфликты
-    4. убираем дубли
-    """
-    active_rules = list(rules) if rules is not None else list(DEFAULT_RULES)
-
-    ops_a = list(operations_a)
-    ops_b = list(operations_b)
-
-    found_conflicts: List[Conflict] = []
-    seen: Set[Tuple[str, Tuple[str, ...], str]] = set()
-
-    for op_a in ops_a:
-        for op_b in ops_b:
-            context = RuleContext(
-                operation_a=op_a,
-                operation_b=op_b,
-                graph_a=graph_a,
-                graph_b=graph_b,
-            )
-
-            for rule in active_rules:
-                result = rule.check(context)
-                if not result.matched or result.conflict is None:
-                    continue
-
-                key = conflict_key(result.conflict)
-                if key in seen:
-                    continue
-
-                seen.add(key)
-                found_conflicts.append(result.conflict)
-
-    return DetectionResult(conflicts=tuple(found_conflicts))
+    return detector.detect(
+        operations_a=operations_a,
+        operations_b=operations_b,
+        graph_a=graph_a,
+        graph_b=graph_b,
+    )

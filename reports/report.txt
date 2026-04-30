@@ -1,0 +1,38 @@
+Schema Merge Conflict Analysis Report
+=====================================
+
+Operations A
+------------
+- Rename public.users.email to email_address.
+
+Operations B
+------------
+- Drop NOT NULL constraint from public.users.email.
+
+Rule Conflicts
+--------------
+No rule conflicts.
+
+Merge Attempt
+-------------
+defined: True
+commutative indicator: True
+
+Path AB
+  constructed: True
+  invariant violations: 0
+
+Path BA
+  constructed: True
+  invariant violations: 0
+
+Summary
+-------
+total rule conflicts: 0
+total merge conflicts: 0
+total conflicts: 0
+merge defined: True
+is commutative: True
+invariant violations count: 0
+has any conflicts: False
+has critical conflicts: False

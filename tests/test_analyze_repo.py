@@ -13,7 +13,7 @@ def write_schema(dir_path: Path, filename: str, content: str) -> None:
     file_path.write_text(content, encoding="utf-8")
 
 
-def test_analyze_repo_detects_rename_vs_modify_conflict(tmp_path: Path):
+def test_analyze_repo_compatible_rename_vs_modify(tmp_path: Path):
     base_dir = tmp_path / "base"
     branch_a_dir = tmp_path / "branch_a"
     branch_b_dir = tmp_path / "branch_b"
@@ -61,10 +61,9 @@ def test_analyze_repo_detects_rename_vs_modify_conflict(tmp_path: Path):
         branch_b_dir=branch_b_dir,
     )
 
-    assert len(result.rule_conflicts) == 1
-    assert result.rule_conflicts[0].rule_id == "R6_RENAME_VS_MODIFY"
-    assert result.merge_attempt.is_defined is False
-    assert result.summary.has_any_conflicts is True
+    assert len(result.rule_conflicts) == 0
+    assert result.merge_attempt.is_defined is True
+    assert result.summary.has_any_conflicts is False
 
 
 def test_analyze_repo_to_report_returns_serialized_structure(tmp_path: Path):
@@ -122,8 +121,8 @@ def test_analyze_repo_to_report_returns_serialized_structure(tmp_path: Path):
     assert "merge_attempt" in report
     assert "summary" in report
 
-    assert report["summary"]["has_any_conflicts"] is True
-    assert report["summary"]["merge_defined"] is False
+    assert report["summary"]["has_any_conflicts"] is False
+    assert report["summary"]["merge_defined"] is True
 
 
 def test_analyze_repo_handles_multiple_sql_files(tmp_path: Path):
@@ -174,5 +173,5 @@ def test_analyze_repo_handles_multiple_sql_files(tmp_path: Path):
         branch_b_dir=branch_b_dir,
     )
 
-    assert len(result.rule_conflicts) == 1
-    assert result.rule_conflicts[0].rule_id == "R6_RENAME_VS_MODIFY"
+    assert len(result.rule_conflicts) == 0
+    assert result.merge_attempt.is_defined is True

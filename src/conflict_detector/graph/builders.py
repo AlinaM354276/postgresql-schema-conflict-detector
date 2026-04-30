@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from src.conflict_detector.core.models import (
+    Column,
     Constraint,
     ConstraintType,
     DataType,
@@ -11,15 +12,83 @@ from src.conflict_detector.core.models import (
     Index,
     ObjectType,
     SchemaEdge,
-    SchemaObject,
     Table,
-    Column,
     freeze_attrs,
 )
 from src.conflict_detector.graph.schema_graph import SchemaGraph
 
 
 DEFAULT_SCHEMA_NAME = "public"
+
+
+BUILTIN_POSTGRES_TYPES = {
+    "smallint",
+    "integer",
+    "int",
+    "int2",
+    "int4",
+    "int8",
+    "bigint",
+    "serial",
+    "bigserial",
+    "real",
+    "double precision",
+    "numeric",
+    "decimal",
+    "money",
+    "text",
+    "varchar",
+    "character varying",
+    "char",
+    "character",
+    "boolean",
+    "bool",
+    "date",
+    "time",
+    "timestamp",
+    "timestamp without time zone",
+    "timestamp with time zone",
+    "timestamptz",
+    "json",
+    "jsonb",
+    "uuid",
+    "bytea",
+}
+
+
+def canonical_data_type_name(type_name: str) -> str:
+    """
+    Канонизирует имя типа данных PostgreSQL.
+
+    Идея:
+    - varchar(255) и varchar(100) относятся к одному DataType: varchar;
+    - numeric(10,2) относится к DataType: numeric;
+    - конкретные параметры типа должны храниться у Column как data_type_raw.
+    """
+    value = " ".join(str(type_name).strip().lower().split())
+
+    if value.startswith("varchar("):
+        return "varchar"
+    if value.startswith("character varying("):
+        return "character varying"
+    if value.startswith("char("):
+        return "char"
+    if value.startswith("character("):
+        return "character"
+    if value.startswith("numeric("):
+        return "numeric"
+    if value.startswith("decimal("):
+        return "decimal"
+    if value.startswith("timestamp("):
+        return "timestamp"
+    if value.startswith("time("):
+        return "time"
+
+    return value
+
+
+def is_builtin_postgres_type(type_name: str) -> bool:
+    return canonical_data_type_name(type_name) in BUILTIN_POSTGRES_TYPES
 
 
 def qname(*parts: str) -> str:
@@ -61,7 +130,7 @@ def make_index_id(
 
 
 def make_data_type_id(type_name: str) -> str:
-    return f"type.{type_name}"
+    return f"type.{canonical_data_type_name(type_name)}"
 
 
 def make_edge_id(
@@ -174,15 +243,19 @@ def build_data_type(
     type_name: str,
     **attrs: Any,
 ) -> DataType:
-    object_id = make_data_type_id(type_name)
+    canonical_name = canonical_data_type_name(type_name)
+    object_id = make_data_type_id(canonical_name)
+
     attributes = {
-        "name": type_name,
+        "name": canonical_name,
+        "builtin": is_builtin_postgres_type(canonical_name),
         **attrs,
     }
+
     return DataType(
         object_id=object_id,
         object_type=ObjectType.DATA_TYPE,
-        name=type_name,
+        name=canonical_name,
         attributes=freeze_attrs(attributes),
     )
 
@@ -211,12 +284,15 @@ def build_edge(
 @dataclass
 class GraphBuilder:
     """
-    Утилита для удобной сборки SchemaGraph в тестах и MVP-сценариях.
+    Утилита для удобной сборки SchemaGraph.
 
-    Основная идея:
-    - быстро добавлять таблицы, столбцы, типы, ограничения, индексы
-    - автоматически создавать типовые рёбра
-    - не писать руками object_id и edge_id на каждом шаге
+    Автоматически создаёт:
+    - Table;
+    - Column;
+    - DataType;
+    - Constraint;
+    - Index;
+    - типовые зависимости contains / typedAs / hasConstraint / hasIndex / references.
     """
     schema_name: str = DEFAULT_SCHEMA_NAME
     graph: SchemaGraph = field(default_factory=SchemaGraph)
@@ -240,6 +316,10 @@ class GraphBuilder:
         table_id = make_table_id(table_name, self.schema_name)
         if self.graph.get_vertex(table_id) is None:
             raise ValueError(f"Table does not exist: {table_id}")
+
+        if data_type is not None:
+            attrs.setdefault("data_type", canonical_data_type_name(data_type))
+            attrs.setdefault("data_type_raw", str(data_type).strip().lower())
 
         column = build_column(
             table_name=table_name,
@@ -357,9 +437,11 @@ class GraphBuilder:
     def ensure_data_type(self, type_name: str, **attrs: Any) -> str:
         type_id = make_data_type_id(type_name)
         existing = self.graph.get_vertex(type_id)
+
         if existing is None:
             data_type = build_data_type(type_name, **attrs)
             self.graph.add_vertex(data_type)
+
         return type_id
 
     def build(self, validate: bool = True) -> SchemaGraph:
@@ -371,11 +453,4 @@ class GraphBuilder:
 def build_schema_graph(
     schema_name: str = DEFAULT_SCHEMA_NAME,
 ) -> GraphBuilder:
-    """
-    Удобная точка входа:
-        builder = build_schema_graph()
-        builder.add_table(...)
-        ...
-        graph = builder.build()
-    """
     return GraphBuilder(schema_name=schema_name)

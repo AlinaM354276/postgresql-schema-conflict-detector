@@ -89,6 +89,7 @@ def analyze_three_way_merge(
         operations_b=branch_b.reconstruction.operations,
         rule_conflicts=detection.conflicts,
         merge_attempt=merge_attempt,
+        interference_pairs=detection.interference_pairs,
     )
 
 
@@ -120,6 +121,7 @@ def analyze_three_way_merge_with_artifacts(
         operations_b=branch_b.reconstruction.operations,
         rule_conflicts=detection.conflicts,
         merge_attempt=merge_attempt,
+        interference_pairs=detection.interference_pairs,
     )
 
     return ThreeWayMergeArtifacts(

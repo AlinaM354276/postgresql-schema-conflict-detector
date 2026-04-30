@@ -15,55 +15,333 @@
       "operation_type": "Modify"
     }
   ],
-  "rule_conflicts": [
-    {
-      "rule_id": "R6_RENAME_VS_MODIFY",
-      "message": "Object is renamed in one branch and modified in another branch.",
-      "object_ids": [
-        "public.users.email"
-      ],
-      "severity": "MEDIUM",
-      "operation_a": {
-        "target": "public.users.email",
-        "new_name": "email_address",
-        "operation_type": "Rename"
-      },
-      "operation_b": {
-        "target": "public.users.email",
-        "delta": {
-          "nullable": true
-        },
-        "operation_type": "Modify"
-      },
-      "metadata": {
-        "operation_a_type": "RenameOperation",
-        "operation_b_type": "ModifyOperation"
-      }
-    }
-  ],
+  "rule_conflicts": [],
   "merge_attempt": {
-    "is_defined": false,
-    "error_message": "Cannot modify unknown object or edge: public.users.email",
+    "is_defined": true,
+    "error_message": null,
+    "is_commutative": true,
     "invariant_violations": [],
-    "merge_conflicts": [
-      {
-        "rule_id": "M1_MERGE_UNDEFINED",
-        "message": "Merge candidate cannot be constructed: Cannot modify unknown object or edge: public.users.email",
-        "object_ids": [],
-        "severity": "CRITICAL",
-        "operation_a": null,
-        "operation_b": null,
-        "metadata": {
-          "kind": "merge_undefined"
+    "merge_conflicts": [],
+    "paths": {
+      "AB": {
+        "order": "AB",
+        "is_constructed": true,
+        "error_message": null,
+        "invariant_violations": [],
+        "conflicts": [],
+        "graph": {
+          "vertices": {
+            "public.users": {
+              "type": "Table",
+              "name": "users",
+              "attributes": {
+                "name": "users",
+                "schema": "public"
+              }
+            },
+            "public.users.id": {
+              "type": "Column",
+              "name": "id",
+              "attributes": {
+                "schema": "public",
+                "name": "id",
+                "data_type": "integer",
+                "nullable": false,
+                "data_type_raw": "integer",
+                "table": "users"
+              }
+            },
+            "type.integer": {
+              "type": "DataType",
+              "name": "integer",
+              "attributes": {
+                "builtin": true,
+                "name": "integer"
+              }
+            },
+            "type.text": {
+              "type": "DataType",
+              "name": "text",
+              "attributes": {
+                "builtin": true,
+                "name": "text"
+              }
+            },
+            "public.users.primary_key_users_id": {
+              "type": "Constraint",
+              "name": "primary_key_users_id",
+              "attributes": {
+                "schema": "public",
+                "name": "primary_key_users_id",
+                "table": "users",
+                "constraint_type": "PRIMARY_KEY",
+                "columns": "id"
+              }
+            },
+            "public.users.email_address": {
+              "type": "Column",
+              "name": "email_address",
+              "attributes": {
+                "schema": "public",
+                "nullable": true,
+                "data_type": "text",
+                "data_type_raw": "text",
+                "name": "email_address",
+                "table": "users"
+              }
+            }
+          },
+          "edges": {
+            "contains:public.users->public.users.id": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.id",
+              "attributes": {}
+            },
+            "typedAs:public.users.id->type.integer": {
+              "type": "typedAs",
+              "source": "public.users.id",
+              "target": "type.integer",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+              "type": "hasConstraint",
+              "source": "public.users.id",
+              "target": "public.users.primary_key_users_id",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.email_address": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.email_address",
+              "attributes": {}
+            },
+            "typedAs:public.users.email_address->type.text": {
+              "type": "typedAs",
+              "source": "public.users.email_address",
+              "target": "type.text",
+              "attributes": {}
+            }
+          }
+        }
+      },
+      "BA": {
+        "order": "BA",
+        "is_constructed": true,
+        "error_message": null,
+        "invariant_violations": [],
+        "conflicts": [],
+        "graph": {
+          "vertices": {
+            "public.users": {
+              "type": "Table",
+              "name": "users",
+              "attributes": {
+                "name": "users",
+                "schema": "public"
+              }
+            },
+            "public.users.id": {
+              "type": "Column",
+              "name": "id",
+              "attributes": {
+                "schema": "public",
+                "name": "id",
+                "data_type": "integer",
+                "nullable": false,
+                "data_type_raw": "integer",
+                "table": "users"
+              }
+            },
+            "type.integer": {
+              "type": "DataType",
+              "name": "integer",
+              "attributes": {
+                "builtin": true,
+                "name": "integer"
+              }
+            },
+            "type.text": {
+              "type": "DataType",
+              "name": "text",
+              "attributes": {
+                "builtin": true,
+                "name": "text"
+              }
+            },
+            "public.users.primary_key_users_id": {
+              "type": "Constraint",
+              "name": "primary_key_users_id",
+              "attributes": {
+                "schema": "public",
+                "name": "primary_key_users_id",
+                "table": "users",
+                "constraint_type": "PRIMARY_KEY",
+                "columns": "id"
+              }
+            },
+            "public.users.email_address": {
+              "type": "Column",
+              "name": "email_address",
+              "attributes": {
+                "schema": "public",
+                "nullable": true,
+                "data_type": "text",
+                "data_type_raw": "text",
+                "name": "email_address",
+                "table": "users"
+              }
+            }
+          },
+          "edges": {
+            "contains:public.users->public.users.id": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.id",
+              "attributes": {}
+            },
+            "typedAs:public.users.id->type.integer": {
+              "type": "typedAs",
+              "source": "public.users.id",
+              "target": "type.integer",
+              "attributes": {}
+            },
+            "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+              "type": "hasConstraint",
+              "source": "public.users.id",
+              "target": "public.users.primary_key_users_id",
+              "attributes": {}
+            },
+            "contains:public.users->public.users.email_address": {
+              "type": "contains",
+              "source": "public.users",
+              "target": "public.users.email_address",
+              "attributes": {}
+            },
+            "typedAs:public.users.email_address->type.text": {
+              "type": "typedAs",
+              "source": "public.users.email_address",
+              "target": "type.text",
+              "attributes": {}
+            }
+          }
         }
       }
-    ],
-    "merged_graph": null
+    },
+    "merged_graph": {
+      "vertices": {
+        "public.users": {
+          "type": "Table",
+          "name": "users",
+          "attributes": {
+            "name": "users",
+            "schema": "public"
+          }
+        },
+        "public.users.id": {
+          "type": "Column",
+          "name": "id",
+          "attributes": {
+            "schema": "public",
+            "name": "id",
+            "data_type": "integer",
+            "nullable": false,
+            "data_type_raw": "integer",
+            "table": "users"
+          }
+        },
+        "type.integer": {
+          "type": "DataType",
+          "name": "integer",
+          "attributes": {
+            "builtin": true,
+            "name": "integer"
+          }
+        },
+        "type.text": {
+          "type": "DataType",
+          "name": "text",
+          "attributes": {
+            "builtin": true,
+            "name": "text"
+          }
+        },
+        "public.users.primary_key_users_id": {
+          "type": "Constraint",
+          "name": "primary_key_users_id",
+          "attributes": {
+            "schema": "public",
+            "name": "primary_key_users_id",
+            "table": "users",
+            "constraint_type": "PRIMARY_KEY",
+            "columns": "id"
+          }
+        },
+        "public.users.email_address": {
+          "type": "Column",
+          "name": "email_address",
+          "attributes": {
+            "schema": "public",
+            "nullable": true,
+            "data_type": "text",
+            "data_type_raw": "text",
+            "name": "email_address",
+            "table": "users"
+          }
+        }
+      },
+      "edges": {
+        "contains:public.users->public.users.id": {
+          "type": "contains",
+          "source": "public.users",
+          "target": "public.users.id",
+          "attributes": {}
+        },
+        "typedAs:public.users.id->type.integer": {
+          "type": "typedAs",
+          "source": "public.users.id",
+          "target": "type.integer",
+          "attributes": {}
+        },
+        "hasConstraint:public.users.id->public.users.primary_key_users_id": {
+          "type": "hasConstraint",
+          "source": "public.users.id",
+          "target": "public.users.primary_key_users_id",
+          "attributes": {}
+        },
+        "contains:public.users->public.users.email_address": {
+          "type": "contains",
+          "source": "public.users",
+          "target": "public.users.email_address",
+          "attributes": {}
+        },
+        "typedAs:public.users.email_address->type.text": {
+          "type": "typedAs",
+          "source": "public.users.email_address",
+          "target": "type.text",
+          "attributes": {}
+        }
+      }
+    }
+  },
+  "conflicts_grouped": {
+    "by_rule": {},
+    "by_severity": {}
   },
   "summary": {
-    "total_rule_conflicts": 1,
-    "merge_defined": false,
+    "total_rule_conflicts": 0,
+    "total_merge_conflicts": 0,
+    "total_conflicts": 0,
+    "by_severity": {
+      "SeverityLevel.LOW": 0,
+      "SeverityLevel.MEDIUM": 0,
+      "SeverityLevel.HIGH": 0,
+      "SeverityLevel.CRITICAL": 0
+    },
+    "merge_defined": true,
     "invariant_violations_count": 0,
-    "has_any_conflicts": true
+    "has_any_conflicts": false,
+    "has_critical": false,
+    "is_commutative": true
   }
 }

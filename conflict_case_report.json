@@ -1,0 +1,105 @@
+{
+  "operations_a": [
+    {
+      "target": "contains:public.users->public.users.email",
+      "operation_type": "Drop"
+    },
+    {
+      "target": "typedAs:public.users.email->type.text",
+      "operation_type": "Drop"
+    },
+    {
+      "target": "public.users.email",
+      "operation_type": "Drop"
+    },
+    {
+      "target": "type.text",
+      "operation_type": "Drop"
+    }
+  ],
+  "operations_b": [
+    {
+      "target": "public.users.email",
+      "delta": {
+        "nullable": true
+      },
+      "operation_type": "Modify"
+    }
+  ],
+  "rule_conflicts": [
+    {
+      "rule_id": "R1_DROP_VS_MODIFY",
+      "message": "Object is dropped in one branch and modified in another branch.",
+      "object_ids": [
+        "public.users.email"
+      ],
+      "severity": "HIGH",
+      "operation_a": {
+        "target": "public.users.email",
+        "operation_type": "Drop"
+      },
+      "operation_b": {
+        "target": "public.users.email",
+        "delta": {
+          "nullable": true
+        },
+        "operation_type": "Modify"
+      },
+      "metadata": {
+        "operation_a_type": "DropOperation",
+        "operation_b_type": "ModifyOperation"
+      }
+    },
+    {
+      "rule_id": "D1_DROP_PREREQUISITE_VS_MODIFY_DEPENDENT",
+      "message": "Prerequisite object is dropped in one branch while a dependent object is modified in another branch.",
+      "object_ids": [
+        "public.users.email",
+        "type.text"
+      ],
+      "severity": "HIGH",
+      "operation_a": {
+        "target": "type.text",
+        "operation_type": "Drop"
+      },
+      "operation_b": {
+        "target": "public.users.email",
+        "delta": {
+          "nullable": true
+        },
+        "operation_type": "Modify"
+      },
+      "metadata": {
+        "dependent_id": "public.users.email",
+        "operation_a_type": "DropOperation",
+        "operation_b_type": "ModifyOperation",
+        "prerequisite_id": "type.text"
+      }
+    }
+  ],
+  "merge_attempt": {
+    "is_defined": false,
+    "error_message": "Cannot modify unknown object or edge: public.users.email",
+    "invariant_violations": [],
+    "merge_conflicts": [
+      {
+        "rule_id": "M1_MERGE_UNDEFINED",
+        "message": "Merge candidate cannot be constructed: Cannot modify unknown object or edge: public.users.email",
+        "object_ids": [],
+        "severity": "CRITICAL",
+        "operation_a": null,
+        "operation_b": null,
+        "metadata": {
+          "kind": "merge_undefined"
+        }
+      }
+    ],
+    "merged_graph": null
+  },
+  "summary": {
+    "total_rule_conflicts": 2,
+    "merge_defined": false,
+    "invariant_violations_count": 0,
+    "has_any_conflicts": true
+  }
+}

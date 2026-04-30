@@ -1,99 +1,89 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 from src.conflict_detector.core.models import Conflict, Operation
 from src.conflict_detector.graph.schema_graph import SchemaGraph
+from src.conflict_detector.semantics.impact import OperationImpact
+
+
+def op_target(operation: Operation) -> str | None:
+    return getattr(operation, "target", None)
+
+
+def same_target(operation_a: Operation, operation_b: Operation) -> bool:
+    return op_target(operation_a) is not None and op_target(operation_a) == op_target(operation_b)
+
+
+def targets_intersect(operation_a: Operation, operation_b: Operation) -> bool:
+    targets_a = {
+        value
+        for value in (
+            getattr(operation_a, "target", None),
+            getattr(operation_a, "source", None),
+        )
+        if value is not None
+    }
+    targets_b = {
+        value
+        for value in (
+            getattr(operation_b, "target", None),
+            getattr(operation_b, "source", None),
+        )
+        if value is not None
+    }
+    return bool(targets_a & targets_b)
 
 
 @dataclass(frozen=True)
 class RuleContext:
-    """
-    Контекст проверки правила.
-
-    Пока MVP-контекст минимален:
-    - две операции
-    - граф ветки A
-    - граф ветки B
-
-    Позже сюда можно добавить:
-    - базовый граф S0
-    - matching
-    - delta
-    - метаданные merge-сценария
-    """
     operation_a: Operation
     operation_b: Operation
-    graph_a: SchemaGraph
-    graph_b: SchemaGraph
+
+    # Старые правила используют graph_a / graph_b.
+    graph_a: Optional[SchemaGraph] = None
+    graph_b: Optional[SchemaGraph] = None
+
+    # Новая формальная модель этапа 3.
+    base_graph: Optional[SchemaGraph] = None
+    impact_a: Optional[OperationImpact] = None
+    impact_b: Optional[OperationImpact] = None
+    shared_impact: Tuple[str, ...] = tuple()
+    dependency_trace: Optional[Dict[str, list[str]]] = None
+
+    def has_intersection(self) -> bool:
+        return bool(self.shared_impact)
 
 
 @dataclass(frozen=True)
 class RuleCheckResult:
-    """
-    Результат срабатывания правила.
+    conflicts: Tuple[Conflict, ...]
 
-    Для MVP достаточно:
-    - сработало ли правило
-    - сам Conflict, если он найден
+    @staticmethod
+    def no_match() -> "RuleCheckResult":
+        return RuleCheckResult(conflicts=tuple())
 
-    Это чуть более явно, чем просто Conflict | None,
-    и облегчает последующее расширение.
-    """
-    matched: bool
-    conflict: Optional[Conflict] = None
+    @staticmethod
+    def from_conflict(conflict: Conflict) -> "RuleCheckResult":
+        return RuleCheckResult(conflicts=(conflict,))
 
-    @classmethod
-    def no_match(cls) -> "RuleCheckResult":
-        return cls(matched=False, conflict=None)
+    @staticmethod
+    def from_conflicts(conflicts: Tuple[Conflict, ...]) -> "RuleCheckResult":
+        return RuleCheckResult(conflicts=conflicts)
 
-    @classmethod
-    def from_conflict(cls, conflict: Conflict) -> "RuleCheckResult":
-        return cls(matched=True, conflict=conflict)
-
-
-@runtime_checkable
-class ConflictRule(Protocol):
-    """
-    Протокол правила обнаружения конфликта.
-
-    Любое правило должно:
-    - иметь стабильный rule_id
-    - уметь проверять пару операций
-    """
-    rule_id: str
-
-    def check(self, context: RuleContext) -> RuleCheckResult:
-        ...
+    def has_conflicts(self) -> bool:
+        return bool(self.conflicts)
 
 
 @dataclass(frozen=True)
 class BaseConflictRule:
-    """
-    Базовая реализация правила.
-
-    Удобна как родительский класс для concrete rules.
-    """
     rule_id: str
-    description: str = ""
+    description: str
 
     def check(self, context: RuleContext) -> RuleCheckResult:
-        raise NotImplementedError("Rule must implement check(context)")
+        raise NotImplementedError
 
 
-def same_target(operation_a: Operation, operation_b: Operation) -> bool:
-    """
-    Базовая эвристика: операции направлены на один и тот же target.
-    """
-    target_a = getattr(operation_a, "target", None)
-    target_b = getattr(operation_b, "target", None)
-    return target_a is not None and target_a == target_b
-
-
-def make_metadata(**kwargs: Any) -> Dict[str, Any]:
-    """
-    Удобный helper для будущего формирования metadata конфликта.
-    В base-слое возвращаем обычный dict; freeze произойдёт в месте создания Conflict.
-    """
-    return kwargs
+# Обратная совместимость со старыми импортами:
+ConflictRule = BaseConflictRule

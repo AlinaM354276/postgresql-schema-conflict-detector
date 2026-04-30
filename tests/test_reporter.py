@@ -49,16 +49,14 @@ def test_build_report_contains_main_sections():
     assert "summary" in report
 
 
-def test_build_report_contains_expected_conflict():
+def test_build_report_contains_compatible_merge_result():
     result = build_sample_result()
     report = build_report(result)
 
-    assert len(report["rule_conflicts"]) == 1
-    assert report["rule_conflicts"][0]["rule_id"] == "R6_RENAME_VS_MODIFY"
-
-    assert report["merge_attempt"]["is_defined"] is False
-    assert len(report["merge_attempt"]["merge_conflicts"]) == 1
-    assert report["merge_attempt"]["merge_conflicts"][0]["rule_id"] == "M1_MERGE_UNDEFINED"
+    assert report["rule_conflicts"] == []
+    assert report["merge_attempt"]["is_defined"] is True
+    assert report["merge_attempt"]["merge_conflicts"] == []
+    assert report["merged_graph"] if "merged_graph" in report else True
 
 
 def test_build_json_report_is_valid_json():
@@ -68,5 +66,5 @@ def test_build_json_report_is_valid_json():
     parsed = json.loads(payload)
 
     assert isinstance(parsed, dict)
-    assert parsed["summary"]["merge_defined"] is False
-    assert parsed["summary"]["has_any_conflicts"] is True
+    assert parsed["summary"]["merge_defined"] is True
+    assert parsed["summary"]["has_any_conflicts"] is False

@@ -1,33 +1,29 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any
+from time import perf_counter
+from typing import Any, Dict
 
 from src.conflict_detector.core.result import ThreeWayMergeAnalysisResult
-from src.conflict_detector.extract.git_extract import extract_schemas_from_directories
+from src.conflict_detector.extract.git_extractor import (
+    extract_three_schemas_from_git,
+)
 from src.conflict_detector.pipeline.analyze_three_way_merge_from_ddl import (
     analyze_three_way_merge_from_ddl,
 )
 from src.conflict_detector.reporting.reporter import build_report
+from src.conflict_detector.reporting.severity import DEFAULT_IMPACT_THRESHOLD
 
 
 def analyze_repo(
-    base_dir: str | Path,
-    branch_a_dir: str | Path,
-    branch_b_dir: str | Path,
+    repo_path: str | Path,
+    branch_a: str,
+    branch_b: str,
 ) -> ThreeWayMergeAnalysisResult:
-    """
-    Repo-level analysis pipeline.
-
-    Шаги:
-    1. Извлечь DDL из трёх директорий.
-    2. Выполнить three-way merge analysis.
-    3. Вернуть структурированный результат анализа.
-    """
-    extracted = extract_schemas_from_directories(
-        base_dir=base_dir,
-        branch_a_dir=branch_a_dir,
-        branch_b_dir=branch_b_dir,
+    extracted = extract_three_schemas_from_git(
+        repo_path=repo_path,
+        branch_a=branch_a,
+        branch_b=branch_b,
     )
 
     return analyze_three_way_merge_from_ddl(
@@ -38,16 +34,27 @@ def analyze_repo(
 
 
 def analyze_repo_to_report(
-    base_dir: str | Path,
-    branch_a_dir: str | Path,
-    branch_b_dir: str | Path,
+    repo_path: str | Path,
+    branch_a: str,
+    branch_b: str,
+    *,
+    impact_threshold: int = DEFAULT_IMPACT_THRESHOLD,
 ) -> Dict[str, Any]:
-    """
-    Repo-level pipeline с готовым сериализованным report.
-    """
+    started_at = perf_counter()
+
     result = analyze_repo(
-        base_dir=base_dir,
-        branch_a_dir=branch_a_dir,
-        branch_b_dir=branch_b_dir,
+        repo_path=repo_path,
+        branch_a=branch_a,
+        branch_b=branch_b,
     )
-    return build_report(result)
+
+    execution_time_seconds = perf_counter() - started_at
+
+    return build_report(
+        result,
+        repo_path=str(repo_path),
+        branch_a=branch_a,
+        branch_b=branch_b,
+        execution_time_seconds=execution_time_seconds,
+        impact_threshold=impact_threshold,
+    )

@@ -5,7 +5,7 @@ from src.conflict_detector.pipeline.analyze_three_way_merge_from_ddl import (
 )
 
 
-def test_analyze_three_way_merge_from_ddl_detects_rename_vs_modify():
+def test_analyze_three_way_merge_from_ddl_compatible_rename_vs_modify():
     base_ddl = """
     CREATE TABLE users (
         id integer PRIMARY KEY,
@@ -33,11 +33,10 @@ def test_analyze_three_way_merge_from_ddl_detects_rename_vs_modify():
         branch_b_ddl=branch_b_ddl,
     )
 
-    assert len(result.rule_conflicts) == 1
-    assert result.rule_conflicts[0].rule_id == "R6_RENAME_VS_MODIFY"
-    assert result.summary.has_any_conflicts is True
+    assert len(result.rule_conflicts) == 0
     assert result.merge_attempt is not None
-    assert result.merge_attempt.is_defined is False
+    assert result.merge_attempt.is_defined is True
+    assert result.summary.has_any_conflicts is False
 
 
 def test_analyze_three_way_merge_from_ddl_defined_case():

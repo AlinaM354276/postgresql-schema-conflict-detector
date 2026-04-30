@@ -183,6 +183,7 @@ Operation = Union[
     ReferenceOperation,
 ]
 
+
 @dataclass(frozen=True)
 class Conflict:
     rule_id: str

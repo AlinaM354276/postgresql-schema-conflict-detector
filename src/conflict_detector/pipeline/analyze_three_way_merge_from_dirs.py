@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.conflict_detector.core.result import ThreeWayMergeAnalysisResult
-from src.conflict_detector.extract.git_extract import (
+from src.conflict_detector.extract.directory_extractor import (
     extract_schemas_from_directories,
 )
 from src.conflict_detector.pipeline.analyze_three_way_merge_from_ddl import (
