@@ -2,9 +2,9 @@
 from src.conflict_detector.reporting.json_report import save_json_report
 
 result = analyze_repo(
-    base_dir="examples/conflict_case/base",
-    branch_a_dir="examples/conflict_case/branch_a",
-    branch_b_dir="examples/conflict_case/branch_b",
+    base_dir="examples/r1/base",
+    branch_a_dir="examples/r1/branch_a",
+    branch_b_dir="examples/r1/branch_b",
 )
 
 save_json_report(result, "conflict_case_report.json")

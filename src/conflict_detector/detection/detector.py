@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
-from src.conflict_detector.core.models import Conflict, Operation
+from src.conflict_detector.core.models import Conflict, Operation, ReferenceOperation
 from src.conflict_detector.graph.schema_graph import SchemaGraph
 from src.conflict_detector.rules.base import ConflictRule, RuleContext, RuleCheckResult
 from src.conflict_detector.rules.registry import DEFAULT_RULES
@@ -116,15 +116,89 @@ def compute_interference_pairs(
     return tuple(pairs)
 
 
+def _operation_reference_signature(operation: Operation | None) -> tuple[str, str] | None:
+    """
+    Возвращает сигнатуру ReferenceOperation: (source, target).
+    """
+    if isinstance(operation, ReferenceOperation):
+        return operation.source, operation.target
+
+    return None
+
+
+def _reference_signature(conflict: Conflict) -> tuple[str, str] | None:
+    """
+    Извлекает reference source/target из metadata или из самих операций.
+
+    Нужно для дедупликации:
+    если найден R3_DANGLING_REFERENCE, то менее специфичный R1 по той же
+    ссылке не должен выводиться.
+    """
+    metadata = dict(conflict.metadata or {})
+
+    source = metadata.get("reference_source_id")
+    target = metadata.get("reference_target_id")
+
+    if source is not None and target is not None:
+        return str(source), str(target)
+
+    operation_a_signature = _operation_reference_signature(conflict.operation_a)
+    if operation_a_signature is not None:
+        return operation_a_signature
+
+    operation_b_signature = _operation_reference_signature(conflict.operation_b)
+    if operation_b_signature is not None:
+        return operation_b_signature
+
+    return None
+
+
+def _prefer_specific_conflicts(conflicts: Iterable[Conflict]) -> Tuple[Conflict, ...]:
+    """
+    Убирает менее специфичные конфликты.
+
+    Если для одной FK-ссылки уже найден R3_DANGLING_REFERENCE,
+    то R1_REFERENTIAL_INTEGRITY по той же FK-ссылке считается дубликатом.
+
+    Это убирает лишний R1 в R3-сценарии:
+    - Add Reference orders.user_id -> users.id
+    - Drop table users
+    """
+    conflicts_tuple = tuple(conflicts)
+
+    r3_reference_signatures = {
+        signature
+        for conflict in conflicts_tuple
+        if conflict.rule_id == "R3_DANGLING_REFERENCE"
+        for signature in [_reference_signature(conflict)]
+        if signature is not None
+    }
+
+    filtered: List[Conflict] = []
+
+    for conflict in conflicts_tuple:
+        signature = _reference_signature(conflict)
+
+        if (
+            conflict.rule_id == "R1_REFERENTIAL_INTEGRITY"
+            and signature is not None
+            and signature in r3_reference_signatures
+        ):
+            continue
+
+        filtered.append(conflict)
+
+    return tuple(filtered)
+
+
 class ConflictDetector:
     """
-    Реализация DetectConflicts(ΔA, ΔB):
+    Реализация DetectConflicts(ΔA, ΔB).
 
-    1. dep
-    2. dep*
-    3. impact(op)
-    4. interfere
-    5. rule checking
+    Важно:
+    правила R1-R7 упорядочены от специальных к общим.
+    Поэтому для одной пары операций берём первое сработавшее правило.
+    Это предотвращает ситуацию, когда R6 перекрывает R1-R5.
     """
 
     def __init__(
@@ -160,9 +234,6 @@ class ConflictDetector:
 
         for operation_a in ops_a:
             for operation_b in ops_b:
-                if should_skip_as_semantically_compatible(operation_a, operation_b):
-                    continue
-
                 shared_impact = tuple(
                     sorted(impacts_intersect(impact_map, operation_a, operation_b))
                 )
@@ -191,8 +262,12 @@ class ConflictDetector:
 
                 for rule in self.rules:
                     check_result = rule.check(context)
+                    rule_conflicts = iter_rule_conflicts(check_result)
 
-                    for conflict in iter_rule_conflicts(check_result):
+                    if not rule_conflicts:
+                        continue
+
+                    for conflict in rule_conflicts:
                         key = conflict_key(conflict)
                         if key in seen:
                             continue
@@ -200,8 +275,11 @@ class ConflictDetector:
                         seen.add(key)
                         conflicts.append(conflict)
 
+                    # Первое сработавшее правило выигрывает.
+                    break
+
         return DetectionResult(
-            conflicts=tuple(conflicts),
+            conflicts=_prefer_specific_conflicts(conflicts),
             interference_pairs=interference_pairs,
         )
 

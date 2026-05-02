@@ -20,14 +20,24 @@ class MergeValidationResult:
 
 
 def invariant_violation_to_conflict(violation: InvariantViolation) -> Conflict:
+    """
+    R7. Semantic incompatibility.
+
+    Merge-level invariant violations считаем реализацией R7:
+    структура merge-кандидата построена, но итоговая схема нарушает
+    семантические/целостностные ограничения.
+    """
     return Conflict(
-        rule_id=f"M2_{violation.invariant_id}",
-        message=violation.message,
+        rule_id="R7_SEMANTIC_INCOMPATIBILITY",
+        message=(
+            "Merged schema violates semantic or integrity invariant: "
+            f"{violation.message}"
+        ),
         object_ids=violation.object_ids,
         severity=SeverityLevel.CRITICAL,
         metadata=freeze_attrs(
             {
-                "kind": "invariant_violation",
+                "kind": "semantic_incompatibility",
                 "invariant_id": violation.invariant_id,
             }
         ),
@@ -38,9 +48,7 @@ def validate_merge_candidate(graph: SchemaGraph) -> MergeValidationResult:
     """
     Проверяет merge-кандидат через инварианты схемы.
 
-    Это отдельный слой над validate_schema_invariants(),
-    потому что в контексте merge нарушение инварианта означает
-    неопределённость результата объединения.
+    Нарушения инвариантов отображаются в R7_SEMANTIC_INCOMPATIBILITY.
     """
     invariant_result = validate_schema_invariants(graph)
     conflicts = tuple(

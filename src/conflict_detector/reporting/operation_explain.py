@@ -76,7 +76,6 @@ def _format_add(op: AddOperation) -> str:
         return f"Add table {op.target}."
 
     if object_type == "Column":
-        table = params.get("table")
         nullable = params.get("nullable")
         data_type = params.get("data_type") or params.get("data_type_raw")
 
@@ -93,10 +92,16 @@ def _format_add(op: AddOperation) -> str:
         constraint_type = params.get("constraint_type")
         columns = params.get("columns")
         details = []
+
         if constraint_type:
             details.append(f"type={constraint_type}")
         if columns:
             details.append(f"columns={columns}")
+        if params.get("on_delete"):
+            details.append(f"on_delete={params.get('on_delete')}")
+        if params.get("on_update"):
+            details.append(f"on_update={params.get('on_update')}")
+
         suffix = f" ({', '.join(details)})" if details else ""
         return f"Add constraint {op.target}{suffix}."
 
@@ -122,6 +127,30 @@ def _format_add(op: AddOperation) -> str:
     return f"Add {object_type} {op.target}."
 
 
+def _looks_like_constraint(target: str) -> bool:
+    name = target.split(".")[-1].lower()
+    return (
+        name.startswith("pk_")
+        or name.startswith("primary_key_")
+        or name.startswith("fk_")
+        or name.startswith("unique_")
+        or name.startswith("check_")
+        or "_pk_" in name
+        or "_fk_" in name
+        or "_unique_" in name
+    )
+
+
+def _looks_like_index(target: str) -> bool:
+    name = target.split(".")[-1].lower()
+    return (
+        name.startswith("idx_")
+        or name.startswith("index_")
+        or "_idx_" in name
+        or "_index_" in name
+    )
+
+
 def _format_drop(op: DropOperation) -> str:
     target = op.target
 
@@ -140,12 +169,18 @@ def _format_drop(op: DropOperation) -> str:
     if target.startswith(f"{EdgeType.REFERENCES.value}:"):
         return f"Drop reference relation {target}."
 
+    if _looks_like_constraint(target):
+        return f"Drop constraint {target}."
+
+    if _looks_like_index(target):
+        return f"Drop index {target}."
+
     parts = target.split(".")
     if len(parts) >= 3:
-        return f"Drop column/object {target}."
+        return f"Drop column {target}."
 
     if len(parts) == 2:
-        return f"Drop table/object {target}."
+        return f"Drop table {target}."
 
     return f"Drop object {target}."
 
@@ -153,21 +188,77 @@ def _format_drop(op: DropOperation) -> str:
 def _format_modify(op: ModifyOperation) -> str:
     delta = dict(op.delta)
 
-    if "nullable" in delta and len(delta) == 1:
+    messages = []
+
+    # ---------- FK referential actions ----------
+
+    if "on_delete" in delta:
+        messages.append(
+            f"Change ON DELETE action of {op.target} to {delta['on_delete']}."
+        )
+
+    if "on_update" in delta:
+        messages.append(
+            f"Change ON UPDATE action of {op.target} to {delta['on_update']}."
+        )
+
+    # ---------- NULLABLE ----------
+
+    if "nullable" in delta:
         nullable = delta["nullable"]
-        if nullable is True:
-            return f"Drop NOT NULL constraint from {op.target}."
+
         if nullable is False:
-            return f"Set NOT NULL constraint on {op.target}."
+            messages.append(
+                f"Set NOT NULL constraint on {op.target}."
+            )
+
+        elif nullable is True:
+            messages.append(
+                f"Drop NOT NULL constraint from {op.target}."
+            )
+
+    # ---------- DATA TYPE ----------
 
     if "data_type" in delta or "data_type_raw" in delta:
         data_type = delta.get("data_type_raw") or delta.get("data_type")
-        return f"Change data type of {op.target} to {data_type}."
 
-    if "default" in delta and len(delta) == 1:
-        return f"Change default value of {op.target} to {delta['default']!r}."
+        messages.append(
+            f"Change data type of {op.target} to {data_type}."
+        )
 
-    return f"Modify {op.target}: {_format_delta(delta)}."
+    # ---------- DEFAULT ----------
+
+    if "default" in delta:
+        messages.append(
+            f"Change default value of {op.target} to {delta['default']!r}."
+        )
+
+    # ---------- FALLBACK ----------
+
+    handled_keys = {
+        "on_delete",
+        "on_update",
+        "nullable",
+        "data_type",
+        "data_type_raw",
+        "default",
+    }
+
+    remaining = {
+        k: v
+        for k, v in delta.items()
+        if k not in handled_keys
+    }
+
+    if remaining:
+        messages.append(
+            f"Modify {op.target}: {_format_delta(remaining)}."
+        )
+
+    if not messages:
+        return f"Modify {op.target}."
+
+    return " ".join(messages)
 
 
 def _format_rename(op: RenameOperation) -> str:

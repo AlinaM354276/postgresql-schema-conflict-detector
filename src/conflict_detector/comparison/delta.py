@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Set, Tuple
 
 from src.conflict_detector.comparison.matching import FullMatchingResult
-from src.conflict_detector.core.models import Delta, EdgeType, ObjectType
+from src.conflict_detector.core.models import Delta
+from src.conflict_detector.graph.builders import canonical_data_type_name
 from src.conflict_detector.graph.schema_graph import SchemaGraph
 
 
@@ -22,22 +23,87 @@ class DeltaDetails:
         return self.delta.is_empty()
 
 
-IGNORED_ATTRS_FOR_DIFF = {
-    # data_type_raw хранит синтаксическую форму типа: INT, int, varchar(255).
-    # Для семантического diff важно сравнивать canonical data_type.
-    "data_type_raw",
-}
+def normalize_type_spec(value: object) -> object:
+    """
+    Нормализует SQL-спецификацию типа для сравнения.
+
+    Нужно, чтобы:
+    - INT и integer считались одинаковыми;
+    - VARCHAR(128) и VARCHAR(255) считались разными;
+    - VARCHAR ( 255 ) и varchar(255) считались одинаковыми.
+    """
+    if value is None:
+        return None
+
+    raw = " ".join(str(value).strip().lower().split())
+
+    aliases = {
+        "int": "integer",
+        "int4": "integer",
+        "int8": "bigint",
+        "bool": "boolean",
+        "character varying": "varchar",
+    }
+
+    if "(" not in raw:
+        return aliases.get(raw, canonical_data_type_name(raw))
+
+    # нормализация пробелов вокруг скобок и запятых
+    raw = raw.replace(" (", "(")
+    raw = raw.replace("( ", "(")
+    raw = raw.replace(" )", ")")
+    raw = raw.replace(" ,", ",")
+    raw = raw.replace(", ", ",")
+
+    if raw.startswith("character varying("):
+        return "varchar" + raw.removeprefix("character varying")
+
+    if raw.startswith("varchar("):
+        return raw
+
+    if raw.startswith("numeric("):
+        return raw
+
+    if raw.startswith("decimal("):
+        return raw
+
+    if raw.startswith("char("):
+        return raw
+
+    if raw.startswith("character("):
+        return "char" + raw.removeprefix("character")
+
+    return raw
+
+
+def normalize_attr_value(key: str, value: object) -> object:
+    if key == "data_type":
+        return canonical_data_type_name(str(value))
+
+    if key == "data_type_raw":
+        return normalize_type_spec(value)
+
+    return value
 
 
 def normalized_attrs(attrs: Dict[str, object]) -> Dict[str, object]:
+    """
+    Нормализует атрибуты перед сравнением.
+
+    Важно:
+    data_type_raw НЕ игнорируется, потому что именно он хранит параметры типа:
+    varchar(128), varchar(255), numeric(10,2) и т.д.
+    """
     return {
-        key: value
+        key: normalize_attr_value(key, value)
         for key, value in attrs.items()
-        if key not in IGNORED_ATTRS_FOR_DIFF
     }
 
 
-def attributes_changed(left_attrs: Dict[str, object], right_attrs: Dict[str, object]) -> bool:
+def attributes_changed(
+    left_attrs: Dict[str, object],
+    right_attrs: Dict[str, object],
+) -> bool:
     return normalized_attrs(left_attrs) != normalized_attrs(right_attrs)
 
 
@@ -113,8 +179,7 @@ def compute_edge_delta(
 
     for left_id, left_edge in left_graph.edges.items():
         # Если ребро исчезло только потому, что исчезла вершина,
-        # не надо создавать отдельный DropOperation(edge).
-        # DropOperation(vertex) сам удалит incident edges в apply.py.
+        # отдельный Drop(edge) не нужен: Drop(vertex) сам удаляет incident edges.
         if edge_endpoint_missing_in_right(left_id, left_graph, right_graph):
             continue
 
@@ -132,10 +197,9 @@ def compute_edge_delta(
         if attributes_changed(left_edge.attr_dict(), right_edge.attr_dict()):
             modified_edge_pairs.add((left_id, right_id))
 
-    for right_id, right_edge in right_graph.edges.items():
+    for right_id in right_graph.edges.keys():
         # Если ребро появилось только потому, что появилась вершина,
-        # оно будет добавлено вместе с объектом либо через отдельную edge Add
-        # только когда endpoints уже существовали в base.
+        # оно будет восстановлено через Add(Column/Constraint/Index).
         if edge_endpoint_missing_in_left(right_id, left_graph, right_graph):
             continue
 

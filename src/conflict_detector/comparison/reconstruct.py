@@ -43,6 +43,7 @@ def object_attr_delta(left: SchemaObject, right: SchemaObject) -> Dict[str, obje
     for key in all_keys:
         left_value = left_attrs.get(key)
         right_value = right_attrs.get(key)
+
         if left_value != right_value:
             changed[key] = right_value
 
@@ -59,6 +60,7 @@ def edge_attr_delta(left: SchemaEdge, right: SchemaEdge) -> Dict[str, object]:
     for key in all_keys:
         left_value = left_attrs.get(key)
         right_value = right_attrs.get(key)
+
         if left_value != right_value:
             changed[key] = right_value
 
@@ -88,14 +90,59 @@ def is_edge_connected_to_builtin_data_type(
 
 
 def is_rename(left: SchemaObject, right: SchemaObject) -> bool:
-    return (
-        left.name != right.name
-        and left.attr_without_name() == right.attr_without_name()
-    )
+    """
+    Rename определяется по изменению имени.
+
+    Важно:
+    раньше rename требовал полного совпадения остальных атрибутов.
+    Из-за этого rename + modify превращался в Drop + Add.
+    """
+    return left.name != right.name
 
 
 def is_modify(left: SchemaObject, right: SchemaObject) -> bool:
-    return left.attr_without_name() != right.attr_without_name()
+    """
+    Modify определяется по изменению атрибутов, кроме имени.
+    """
+    left_attrs = left.attr_without_name()
+    right_attrs = right.attr_without_name()
+    return left_attrs != right_attrs
+
+
+def is_table_id(object_id: str) -> bool:
+    return len(object_id.split(".")) == 2
+
+
+def is_child_of_renamed_table(
+    object_id: str,
+    rename_left_to_right: Dict[str, str],
+) -> bool:
+    """
+    Если таблица public.users переименована в public.customers,
+    то дочерние объекты public.users.id / public.customers.id
+    не должны дополнительно реконструироваться как Drop/Add.
+    """
+    for old_table_id, new_table_id in rename_left_to_right.items():
+        if not is_table_id(old_table_id) or not is_table_id(new_table_id):
+            continue
+
+        old_prefix = old_table_id + "."
+        new_prefix = new_table_id + "."
+
+        if object_id.startswith(old_prefix) or object_id.startswith(new_prefix):
+            return True
+
+    return False
+
+
+def is_edge_inside_renamed_table(
+    edge: SchemaEdge,
+    rename_left_to_right: Dict[str, str],
+) -> bool:
+    return (
+        is_child_of_renamed_table(edge.source_id, rename_left_to_right)
+        or is_child_of_renamed_table(edge.target_id, rename_left_to_right)
+    )
 
 
 def is_edge_related_to_rename(
@@ -108,6 +155,27 @@ def is_edge_related_to_rename(
         or edge.source_id in rename_left_to_right.values()
         or edge.target_id in rename_left_to_right.values()
     )
+
+
+def is_structural_edge(edge: SchemaEdge) -> bool:
+    """
+    Structural edges являются внутренней частью графового представления.
+
+    Их НЕ нужно реконструировать как самостоятельные semantic operations:
+    - contains;
+    - typedAs;
+    - hasConstraint;
+    - hasIndex.
+
+    Они восстанавливаются в semantics/apply.py при Add(Column/Constraint/Index)
+    и удаляются автоматически при Drop(vertex).
+    """
+    return edge.edge_type in {
+        EdgeType.CONTAINS,
+        EdgeType.TYPED_AS,
+        EdgeType.HAS_CONSTRAINT,
+        EdgeType.HAS_INDEX,
+    }
 
 
 def edge_to_reference_operation(
@@ -159,8 +227,9 @@ def build_add_operations(
         if obj is None:
             continue
 
-        # Builtin PostgreSQL DataType — служебная вершина графа,
-        # но не самостоятельная операция эволюции.
+        if is_child_of_renamed_table(obj.object_id, rename_left_to_right):
+            continue
+
         if is_builtin_data_type(obj):
             continue
 
@@ -184,13 +253,11 @@ def build_add_operations(
         if is_edge_related_to_rename(edge, rename_left_to_right):
             continue
 
-        # typedAs к builtin DataType НЕ пропускаем:
-        # при Add(Column) это ребро необходимо для валидного графа.
-        # Сама вершина type.text создаётся служебно в apply.py.
-        if (
-            is_edge_connected_to_builtin_data_type(edge, right_graph)
-            and edge.edge_type != EdgeType.TYPED_AS
-        ):
+        if is_edge_inside_renamed_table(edge, rename_left_to_right):
+            continue
+
+        # Structural edges не являются самостоятельными semantic operations.
+        if is_structural_edge(edge):
             continue
 
         reference_op = edge_to_reference_operation(
@@ -233,12 +300,12 @@ def build_drop_operations(
         if is_edge_related_to_rename(edge, rename_left_to_right):
             continue
 
-        # typedAs к builtin DataType НЕ пропускаем:
-        # при Drop(Column) это ребро должно быть удалено как часть удаления колонки.
-        if (
-            is_edge_connected_to_builtin_data_type(edge, left_graph)
-            and edge.edge_type != EdgeType.TYPED_AS
-        ):
+        if is_edge_inside_renamed_table(edge, rename_left_to_right):
+            continue
+
+        # Structural edges не должны становиться DropOperation.
+        # Drop(Column/Table/Constraint/Index) сам удалит incident edges в apply.py.
+        if is_structural_edge(edge):
             continue
 
         reference_op = edge_to_reference_operation(
@@ -256,7 +323,9 @@ def build_drop_operations(
         if obj is None:
             continue
 
-        # Builtin PostgreSQL DataType не удаляется как объект схемы.
+        if is_child_of_renamed_table(obj.object_id, rename_left_to_right):
+            continue
+
         if is_builtin_data_type(obj):
             continue
 
@@ -289,7 +358,6 @@ def build_rename_modify_operations(
                     new_name=right_obj.name,
                 )
             )
-            continue
 
         if is_modify(left_obj, right_obj):
             delta = object_attr_delta(left_obj, right_obj)
@@ -310,10 +378,7 @@ def build_rename_modify_operations(
         if left_edge is None or right_edge is None:
             continue
 
-        if (
-            is_edge_connected_to_builtin_data_type(left_edge, left_graph)
-            and left_edge.edge_type != EdgeType.TYPED_AS
-        ):
+        if is_structural_edge(left_edge):
             continue
 
         delta = edge_attr_delta(left_edge, right_edge)
@@ -329,26 +394,73 @@ def build_rename_modify_operations(
 
 
 def operation_priority(operation: Operation) -> int:
+    """
+    Dependency-aware порядок операций.
+
+    Для Add:
+    Table -> Column -> Constraint -> Index -> Reference.
+
+    Для Drop:
+    Reference -> Index/Constraint -> Column -> Table.
+
+    Rename table выполняется раньше дочерних операций.
+    """
+    if isinstance(operation, RenameOperation):
+        target_parts = operation.target.split(".")
+
+        if len(target_parts) == 2:
+            return 5
+
+        return 55
+
     if isinstance(operation, AddOperation):
         params = dict(operation.params)
+
         if {"edge_type", "source_id", "target_id"}.issubset(params.keys()):
+            return 25
+
+        object_type = params.get("object_type")
+
+        if object_type == ObjectType.TABLE.value:
+            return 10
+
+        if object_type == ObjectType.COLUMN.value:
             return 20
-        return 10
+
+        if object_type == ObjectType.DATA_TYPE.value:
+            return 22
+
+        if object_type == ObjectType.CONSTRAINT.value:
+            return 30
+
+        if object_type == ObjectType.INDEX.value:
+            return 40
+
+        return 50
 
     if isinstance(operation, ReferenceOperation):
         if operation.change_type == ReferenceChangeType.DROP:
-            return 5
-        return 30
-
-    if isinstance(operation, ModifyOperation):
-        return 40
-
-    if isinstance(operation, RenameOperation):
-        return 50
+            return 8
+        return 80
 
     if isinstance(operation, DropOperation):
-        if "->" in operation.target or ":" in operation.target:
-            return 60
+        target = operation.target
+
+        if ".idx_" in target or "index" in target:
+            return 10
+
+        if ".primary_key_" in target or ".fk_" in target or ".unique_" in target:
+            return 20
+
+        if len(target.split(".")) >= 3:
+            return 30
+
+        if len(target.split(".")) == 2:
+            return 40
+
+        return 50
+
+    if isinstance(operation, ModifyOperation):
         return 70
 
     return 100
@@ -372,15 +484,35 @@ def topological_sort_operations(
     operations: List[Operation],
     graph: SchemaGraph,
 ) -> List[Operation]:
+    """
+    Упорядочивает реконструированные операции.
+
+    Сохраняем простую и устойчивую сортировку, чтобы не ломать apply.py.
+    """
     _ = graph
 
-    return sorted(
-        operations,
-        key=lambda op: (
+    def op_params(op: Operation) -> dict:
+        return dict(getattr(op, "params", {}) or {})
+
+    def op_target(op: Operation) -> str:
+        return getattr(op, "target", "")
+
+    def op_schema(op: Operation) -> str:
+        return str(op_params(op).get("schema", "public"))
+
+    def op_table(op: Operation) -> str:
+        return str(op_params(op).get("table", ""))
+
+    def stable_key(op: Operation) -> tuple:
+        return (
             operation_priority(op),
-            str(op),
-        ),
-    )
+            op_schema(op),
+            op_table(op),
+            op_target(op),
+            type(op).__name__,
+        )
+
+    return sorted(operations, key=stable_key)
 
 
 def reconstruct_operations(
@@ -406,6 +538,7 @@ def reconstruct_operations(
             rename_left_to_right=rename_left_to_right,
         )
     )
+
     operations.extend(
         build_drop_operations(
             left_graph=left_graph,
@@ -413,6 +546,7 @@ def reconstruct_operations(
             rename_left_to_right=rename_left_to_right,
         )
     )
+
     operations.extend(
         build_rename_modify_operations(
             left_graph=left_graph,

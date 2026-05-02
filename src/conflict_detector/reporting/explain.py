@@ -6,56 +6,104 @@ from src.conflict_detector.core.models import Conflict
 
 
 RULE_EXPLANATIONS: Dict[str, Dict[str, str]] = {
-    "R1_DROP_VS_MODIFY": {
-        "type": "Structural conflict",
-        "title": "Drop vs Modify",
+    "R1_REFERENTIAL_INTEGRITY": {
+        "type": "Referential integrity conflict",
+        "title": "R1. Referential integrity conflict",
         "description": (
-            "Object is deleted in one branch and modified in another branch."
+            "One branch drops an object that is used directly or transitively "
+            "by an operation in another branch."
         ),
         "reason": (
-            "After applying operations, modification is attempted on a non-existent object."
+            "The second operation depends on an object removed by the first branch."
         ),
         "consequence": (
-            "Operations are non-commutative. Merge is undefined."
+            "The merge may produce invalid references or broken dependent objects."
         ),
     },
-    "R3_RENAME_VS_RENAME": {
-        "type": "Semantic conflict",
-        "title": "Rename vs Rename",
+    "R2_TYPE_INCONSISTENCY": {
+        "type": "Type inconsistency conflict",
+        "title": "R2. Type inconsistency",
         "description": (
-            "Object is renamed differently in two branches."
+            "One branch changes a column type while another branch adds or modifies "
+            "a dependent object assuming the old type."
         ),
         "reason": (
-            "There is no unique mapping between resulting object identities."
+            "Foreign keys, indexes, and constraints may no longer be valid after "
+            "the type change."
         ),
         "consequence": (
-            "Merge cannot determine final object name."
+            "The resulting schema may violate type compatibility requirements."
         ),
     },
-    "R5_ADD_VS_ADD": {
-        "type": "Semantic conflict",
-        "title": "Add vs Add",
+    "R3_DANGLING_REFERENCE": {
+        "type": "Dangling reference conflict",
+        "title": "R3. Dangling reference",
         "description": (
-            "Same object is added differently in two branches."
+            "A branch adds a reference to an object that is absent or dropped "
+            "in another branch."
         ),
         "reason": (
-            "Conflicting definitions detected for the same object."
+            "The reference source or target does not exist in the merged schema."
         ),
         "consequence": (
-            "Ambiguous object definition prevents merge."
+            "The merge result violates reference well-formedness."
         ),
     },
-    "I1_DROP_COLUMN_VS_ADD_INDEX": {
-        "type": "Dependency conflict",
-        "title": "Drop Column vs Add Index",
+    "R4_NAMING_CONFLICT": {
+        "type": "Naming / correspondence conflict",
+        "title": "R4. Naming conflict",
         "description": (
-            "Column is dropped in one branch while an index is created on it in another branch."
+            "The same object identity or name is introduced with different definitions."
         ),
         "reason": (
-            "Index depends on a column that no longer exists."
+            "Equal names do not imply semantic equivalence."
         ),
         "consequence": (
-            "Schema invariants are violated. Merge is undefined."
+            "The merge cannot decide which object definition is correct."
+        ),
+    },
+    "R5_RENAME_AWARE_CONFLICT": {
+        "type": "Rename-aware conflict",
+        "title": "R5. Rename-aware conflict",
+        "description": (
+            "A rename operation conflicts with another operation that uses the old "
+            "identity or creates a colliding identity."
+        ),
+        "reason": (
+            "The correspondence between old and new object identities is ambiguous "
+            "or inconsistent."
+        ),
+        "consequence": (
+            "The merge may lose identity preservation or create duplicate objects."
+        ),
+    },
+    "R6_TRANSITIVE_DEPENDENCY_CONFLICT": {
+        "type": "Dependency-induced conflict",
+        "title": "R6. Transitive dependency conflict",
+        "description": (
+            "Operations have intersecting transitive impact sets and are not known "
+            "to be compatible."
+        ),
+        "reason": (
+            "The conflict is induced through dependency chains rather than only "
+            "through direct target equality."
+        ),
+        "consequence": (
+            "The operations may be non-commutative or produce different merge results."
+        ),
+    },
+    "R7_SEMANTIC_INCOMPATIBILITY": {
+        "type": "Semantic incompatibility",
+        "title": "R7. Semantic incompatibility",
+        "description": (
+            "The merged schema violates semantic or integrity invariants."
+        ),
+        "reason": (
+            "The merge candidate is not valid under schema well-formedness or "
+            "integrity constraints."
+        ),
+        "consequence": (
+            "The merge result must be rejected or manually resolved."
         ),
     },
 }

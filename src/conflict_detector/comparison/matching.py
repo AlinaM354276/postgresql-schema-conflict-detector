@@ -49,36 +49,40 @@ class MatchingResult:
         return [MatchPair(l, r) for l, r in self.left_to_right.items()]
 
 
+IDENTITY_OR_CONTEXT_KEYS = {
+    "name",
+    "schema",
+    "table",
+    "owner",
+    "object_id",
+}
+
+
+def comparable_attr_dict(obj: SchemaObject) -> Dict[str, object]:
+    attrs = obj.attr_dict().copy()
+    for key in IDENTITY_OR_CONTEXT_KEYS:
+        attrs.pop(key, None)
+    return attrs
+
+
 def comparable_attributes(left: SchemaObject, right: SchemaObject) -> bool:
     """
-    Атрибутивная сопоставимость.
+    Строгая атрибутивная сопоставимость.
 
-    Мягкий критерий:
-    - тип объекта должен совпадать;
-    - сравниваются все атрибуты, кроме идентифицирующих/контекстных.
+    Используется для очевидных rename-кандидатов.
     """
     if left.object_type != right.object_type:
         return False
 
-    left_attrs = left.attr_dict().copy()
-    right_attrs = right.attr_dict().copy()
-
-    ignored_keys = {"name", "schema", "table", "owner"}
-    for key in ignored_keys:
-        left_attrs.pop(key, None)
-        right_attrs.pop(key, None)
-
-    return left_attrs == right_attrs
+    return comparable_attr_dict(left) == comparable_attr_dict(right)
 
 
 def stable_owner_key(obj: SchemaObject) -> str:
     """
-    Возвращает контекст объекта для strong matching.
+    Контекст объекта для matching.
 
-    Проблема старого варианта:
-    (Column, id) ошибочно склеивал users.id и orders.id.
-
-    Поэтому для колонок, ограничений и индексов учитывается table/schema-контекст.
+    Для колонок, ограничений и индексов учитывается table/schema-контекст,
+    чтобы users.id и orders.id не сопоставлялись друг с другом.
     """
     attrs = obj.attr_dict()
 
@@ -95,11 +99,8 @@ def stable_owner_key(obj: SchemaObject) -> str:
 
 def strong_name_key(obj: SchemaObject) -> Tuple[str, str, str]:
     """
-    Сильный ключ для очевидного matching:
+    Сильный ключ для обычного matching:
     (тип, owner/context, имя).
-
-    Это защищает от homonym problem:
-    одинаковые имена в разных таблицах не должны считаться одним объектом.
     """
     return obj.object_type.value, stable_owner_key(obj), obj.name
 
@@ -107,13 +108,12 @@ def strong_name_key(obj: SchemaObject) -> Tuple[str, str, str]:
 def structure_signature(
     graph: SchemaGraph,
     object_id: str,
-) -> Tuple[str, str, Tuple[str, ...], Tuple[str, ...]]:
+) -> Tuple[str, Tuple[str, ...], Tuple[str, ...]]:
     """
-    Структурная сигнатура объекта:
-    - тип объекта;
-    - имя;
-    - типы входящих рёбер;
-    - типы исходящих рёбер.
+    Структурная сигнатура объекта БЕЗ имени.
+
+    Важно:
+    имя не включается специально, иначе rename превращается в Drop + Add.
     """
     obj = graph.get_vertex(object_id)
     if obj is None:
@@ -128,9 +128,30 @@ def structure_signature(
 
     return (
         obj.object_type.value,
-        obj.name,
         incoming_types,
         outgoing_types,
+    )
+
+
+def attr_similarity(left: SchemaObject, right: SchemaObject) -> int:
+    """
+    Простая оценка похожести атрибутов.
+
+    Нужна, чтобы rename + modify всё равно сопоставлялся как один объект,
+    а не как Drop старого объекта + Add нового объекта.
+    """
+    left_attrs = comparable_attr_dict(left)
+    right_attrs = comparable_attr_dict(right)
+
+    keys = set(left_attrs.keys()) | set(right_attrs.keys())
+
+    if not keys:
+        return 0
+
+    return sum(
+        1
+        for key in keys
+        if left_attrs.get(key) == right_attrs.get(key)
     )
 
 
@@ -173,7 +194,8 @@ def match_vertices(
     """
     Сопоставление вершин:
     1. strong matching по (type, owner/context, name);
-    2. мягкое structure/attribute matching для rename-кандидатов.
+    2. мягкое matching для rename-кандидатов;
+    3. поддержка rename + modify.
     """
     result = MatchingResult()
 
@@ -184,6 +206,7 @@ def match_vertices(
     for obj in right_vertices:
         right_by_strong_key.setdefault(strong_name_key(obj), []).append(obj.object_id)
 
+    # 1. Очевидное сопоставление по имени.
     for left_obj in left_vertices:
         key = strong_name_key(left_obj)
         candidates = right_by_strong_key.get(key, [])
@@ -195,6 +218,7 @@ def match_vertices(
                 if right_obj is not None:
                     result.add(left_obj.object_id, candidate_id)
 
+    # 2. Rename / rename+modify matching.
     unmatched_left = [
         vertex
         for vertex in left_vertices
@@ -207,7 +231,8 @@ def match_vertices(
     ]
 
     for left_obj in unmatched_left:
-        candidates: List[SchemaObject] = []
+        scored_candidates: List[Tuple[int, str]] = []
+
         left_sig = structure_signature(left_graph, left_obj.object_id)
         left_owner = stable_owner_key(left_obj)
 
@@ -221,20 +246,30 @@ def match_vertices(
             if stable_owner_key(right_obj) != left_owner:
                 continue
 
-            if not comparable_attributes(left_obj, right_obj):
-                continue
-
             right_sig = structure_signature(right_graph, right_obj.object_id)
 
-            if (
-                left_sig[0] == right_sig[0]
-                and left_sig[2] == right_sig[2]
-                and left_sig[3] == right_sig[3]
-            ):
-                candidates.append(right_obj)
+            if left_sig != right_sig:
+                continue
 
-        if len(candidates) == 1:
-            result.add(left_obj.object_id, candidates[0].object_id)
+            score = attr_similarity(left_obj, right_obj)
+
+            # Строгий rename получает большой бонус.
+            if comparable_attributes(left_obj, right_obj):
+                score += 100
+
+            scored_candidates.append((score, right_obj.object_id))
+
+        if not scored_candidates:
+            continue
+
+        scored_candidates.sort(reverse=True)
+        best_score, best_id = scored_candidates[0]
+
+        # Если два кандидата одинаково хороши, matching неоднозначен.
+        if len(scored_candidates) > 1 and scored_candidates[1][0] == best_score:
+            continue
+
+        result.add(left_obj.object_id, best_id)
 
     return result
 

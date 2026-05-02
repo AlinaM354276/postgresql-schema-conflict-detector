@@ -1,4 +1,4 @@
-CREATE TABLE users (
+CREATE TABLE customers (
     id INT PRIMARY KEY
 );
 
@@ -7,5 +7,5 @@ CREATE TABLE orders (
     user_id INT,
     CONSTRAINT fk_orders_user
         FOREIGN KEY (user_id)
-        REFERENCES users(id)
+        REFERENCES customers(id)
 );

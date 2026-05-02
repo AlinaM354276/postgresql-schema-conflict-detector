@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Iterable, Tuple
 
 from src.conflict_detector.core.models import Conflict, SeverityLevel, freeze_attrs
@@ -39,21 +38,17 @@ def raise_severity(level: SeverityLevel, steps: int = 1) -> SeverityLevel:
 
 
 def is_invariant_conflict(conflict: Conflict) -> bool:
+    if conflict.rule_id == "R7_SEMANTIC_INCOMPATIBILITY":
+        return True
+
     if conflict.rule_id.startswith("M2_"):
         return True
 
     metadata = dict(conflict.metadata or {})
-    return metadata.get("kind") == "invariant_violation"
-
-
-def is_integrity_conflict(conflict: Conflict) -> bool:
-    prefixes = (
-        "F",
-        "C",
-        "I",
-        "D",
-    )
-    return conflict.rule_id.startswith(prefixes)
+    return metadata.get("kind") in {
+        "invariant_violation",
+        "semantic_incompatibility",
+    }
 
 
 def impact_size(conflict: Conflict) -> int:
@@ -71,26 +66,22 @@ def impact_size(conflict: Conflict) -> int:
 
 
 def base_severity(conflict: Conflict) -> SeverityLevel:
-    if is_invariant_conflict(conflict):
+    if conflict.rule_id in {
+        "R1_REFERENTIAL_INTEGRITY",
+        "R3_DANGLING_REFERENCE",
+        "R7_SEMANTIC_INCOMPATIBILITY",
+    }:
         return SeverityLevel.CRITICAL
 
     if conflict.rule_id in {
-        "R1_DROP_VS_MODIFY",
-        "R2_DROP_VS_RENAME",
-        "F1_DROP_REFERENCED_TARGET_VS_MODIFY_REFERENCE_SOURCE",
-        "C1_DROP_PRIMARY_KEY_VS_MODIFY_DEPENDENT",
-        "I1_DROP_COLUMN_VS_ADD_INDEX",
-        "D1_DROP_PREREQUISITE_VS_MODIFY_DEPENDENT",
-        "D2_DROP_PREREQUISITE_VS_RENAME_DEPENDENT",
+        "R2_TYPE_INCONSISTENCY",
+        "R4_NAMING_CONFLICT",
     }:
         return SeverityLevel.HIGH
 
     if conflict.rule_id in {
-        "R3_RENAME_VS_RENAME",
-        "R4_MODIFY_VS_MODIFY",
-        "R5_ADD_VS_ADD",
-        "R6_RENAME_VS_MODIFY",
-        "M3_NON_COMMUTATIVE_OPERATIONS",
+        "R5_RENAME_AWARE_CONFLICT",
+        "R6_TRANSITIVE_DEPENDENCY_CONFLICT",
     }:
         return SeverityLevel.MEDIUM
 
@@ -106,6 +97,23 @@ def evaluate_severity(
 
     if is_invariant_conflict(conflict):
         return SeverityLevel.CRITICAL
+
+    # R1, R3, R7 критические по смыслу.
+    if conflict.rule_id in {
+        "R1_REFERENTIAL_INTEGRITY",
+        "R3_DANGLING_REFERENCE",
+        "R7_SEMANTIC_INCOMPATIBILITY",
+    }:
+        return SeverityLevel.CRITICAL
+
+    # R2 должен оставаться HIGH.
+    # Большой impact не должен превращать несовместимость типов в CRITICAL,
+    # иначе отчёт становится слишком шумным.
+    if conflict.rule_id == "R2_TYPE_INCONSISTENCY":
+        return SeverityLevel.HIGH
+
+    if conflict.rule_id == "R4_NAMING_CONFLICT":
+        return SeverityLevel.HIGH
 
     if impact_size(conflict) > impact_threshold:
         level = raise_severity(level, steps=1)

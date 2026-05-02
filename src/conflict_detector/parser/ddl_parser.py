@@ -7,13 +7,9 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from src.conflict_detector.core.models import (
     ConstraintType,
     EdgeType,
-    ObjectType,
     SchemaEdge,
     SchemaObject,
 )
-
-from src.conflict_detector.graph.schema_graph import SchemaGraph
-
 from src.conflict_detector.graph.builders import (
     DEFAULT_SCHEMA_NAME,
     build_column,
@@ -26,11 +22,10 @@ from src.conflict_detector.graph.builders import (
     make_column_id,
     make_constraint_id,
     make_data_type_id,
-    make_edge_id,
     make_index_id,
     make_table_id,
 )
-
+from src.conflict_detector.graph.schema_graph import SchemaGraph
 from src.conflict_detector.parser.normalizer import (
     normalize_column_name,
     normalize_constraint_name,
@@ -202,6 +197,25 @@ TABLE_FK_RE = re.compile(
     re.IGNORECASE | re.VERBOSE | re.DOTALL,
 )
 
+REFERENTIAL_ACTION_RE = re.compile(
+    r"""
+    \b
+    on
+    \s+
+    (?P<event>delete|update)
+    \s+
+    (?P<action>
+        cascade
+        | restrict
+        | no\s+action
+        | set\s+null
+        | set\s+default
+    )
+    \b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 ALTER_ADD_COLUMN_RE = re.compile(
     r"""
     ^
@@ -308,6 +322,8 @@ class ParsedReference:
     target_table: str
     target_column: str
     constraint_name: Optional[str] = None
+    on_delete: Optional[str] = None
+    on_update: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -319,7 +335,7 @@ class ParsedColumn:
     default: Optional[str]
     is_primary_key: bool
     is_unique: bool
-    reference: Optional[Tuple[str, str]] = None
+    reference: Optional[Tuple[str, str, Optional[str], Optional[str]]] = None
 
 
 @dataclass(frozen=True)
@@ -329,6 +345,8 @@ class TableConstraint:
     columns: Tuple[str, ...]
     expression: Optional[str] = None
     references: Optional[Tuple[str, Tuple[str, ...]]] = None
+    on_delete: Optional[str] = None
+    on_update: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -459,6 +477,26 @@ def collapse_spaces(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip())
 
 
+def normalize_referential_action(value: str) -> str:
+    return collapse_spaces(value).lower()
+
+
+def extract_referential_actions(tail: str) -> Tuple[Optional[str], Optional[str]]:
+    on_delete: Optional[str] = None
+    on_update: Optional[str] = None
+
+    for match in REFERENTIAL_ACTION_RE.finditer(tail or ""):
+        event = match.group("event").lower()
+        action = normalize_referential_action(match.group("action"))
+
+        if event == "delete":
+            on_delete = action
+        elif event == "update":
+            on_update = action
+
+    return on_delete, on_update
+
+
 def parse_table_name(raw_table_name: str) -> Tuple[str, str]:
     table_fqn = normalize_table_name(raw_table_name.strip())
     schema_name, table_name = split_qualified_name(table_fqn)
@@ -512,7 +550,9 @@ def extract_default(raw_tail: str) -> Tuple[str, Optional[str]]:
     return collapse_spaces(cleaned), default_expr
 
 
-def parse_inline_reference(definition_tail: str) -> Tuple[str, Optional[Tuple[str, str]]]:
+def parse_inline_reference(
+    definition_tail: str,
+) -> Tuple[str, Optional[Tuple[str, str, Optional[str], Optional[str]]]]:
     match = INLINE_REFERENCES_RE.match(definition_tail.strip())
     if not match:
         return definition_tail, None
@@ -522,11 +562,13 @@ def parse_inline_reference(definition_tail: str) -> Tuple[str, Optional[Tuple[st
     ref_column_raw = match.group("ref_column").strip()
     suffix = match.group("suffix").strip()
 
+    on_delete, on_update = extract_referential_actions(suffix)
+
     cleaned = " ".join(part for part in [prefix, suffix] if part).strip()
     ref_table_fqn = normalize_table_name(ref_table_raw)
     ref_column = normalize_column_name(strip_quotes(ref_column_raw))
 
-    return cleaned, (ref_table_fqn, ref_column)
+    return cleaned, (ref_table_fqn, ref_column, on_delete, on_update)
 
 
 def find_modifier_start(tokens: Sequence[str]) -> int:
@@ -668,6 +710,7 @@ def parse_table_constraint(definition: str, table_name: str) -> Optional[TableCo
         source_columns = parse_column_list(fk_match.group("source_columns"))
         target_table_fqn = normalize_table_name(fk_match.group("target_table").strip())
         target_columns = parse_column_list(fk_match.group("target_columns"))
+        on_delete, on_update = extract_referential_actions(fk_match.group("tail"))
 
         if len(source_columns) != len(target_columns):
             raise ValueError(f"FOREIGN KEY column count mismatch: {definition}")
@@ -682,6 +725,8 @@ def parse_table_constraint(definition: str, table_name: str) -> Optional[TableCo
             constraint_type=ConstraintType.FOREIGN_KEY,
             columns=source_columns,
             references=(target_table_fqn, target_columns),
+            on_delete=on_delete,
+            on_update=on_update,
         )
 
     return None
@@ -695,6 +740,33 @@ def add_vertex_if_absent(graph: SchemaGraph, vertex: SchemaObject) -> None:
 def add_edge_if_absent(graph: SchemaGraph, edge: SchemaEdge) -> None:
     if graph.get_edge(edge.edge_id) is None:
         graph.add_edge(edge)
+
+
+def remove_edge(graph: SchemaGraph, edge_id: str) -> None:
+    edge = graph.get_edge(edge_id)
+    if edge is None:
+        return
+
+    graph.outgoing.get(edge.source_id, set()).discard(edge_id)
+    graph.incoming.get(edge.target_id, set()).discard(edge_id)
+    graph.edges.pop(edge_id, None)
+
+
+def remove_vertex_and_incident_edges(graph: SchemaGraph, object_id: str) -> None:
+    if graph.get_vertex(object_id) is None:
+        return
+
+    incident_edges = (
+        set(graph.outgoing.get(object_id, set()))
+        | set(graph.incoming.get(object_id, set()))
+    )
+
+    for edge_id in list(incident_edges):
+        remove_edge(graph, edge_id)
+
+    graph.outgoing.pop(object_id, None)
+    graph.incoming.pop(object_id, None)
+    graph.vertices.pop(object_id, None)
 
 
 def ensure_table(graph: SchemaGraph, schema_name: str, table_name: str) -> str:
@@ -778,6 +850,8 @@ def add_constraint_object(
     columns: Sequence[str] = tuple(),
     expression: Optional[str] = None,
     references: Optional[Tuple[str, Tuple[str, ...]]] = None,
+    on_delete: Optional[str] = None,
+    on_update: Optional[str] = None,
 ) -> str:
     constraint_id = make_constraint_id(table_name, constraint_name, schema_name)
 
@@ -795,6 +869,10 @@ def add_constraint_object(
         target_table, target_columns = references
         attrs["references_table"] = target_table
         attrs["references_columns"] = ",".join(target_columns)
+    if on_delete is not None:
+        attrs["on_delete"] = on_delete
+    if on_update is not None:
+        attrs["on_update"] = on_update
 
     constraint_attrs = attrs.copy()
     constraint_attrs.pop("constraint_type", None)
@@ -839,6 +917,8 @@ def add_reference_edge(
     target_table_fqn: str,
     target_column: str,
     constraint_name: Optional[str] = None,
+    on_delete: Optional[str] = None,
+    on_update: Optional[str] = None,
 ) -> None:
     target_schema, target_table = split_qualified_name(target_table_fqn)
     target_schema = normalize_schema_name(target_schema or DEFAULT_SCHEMA_NAME)
@@ -854,6 +934,10 @@ def add_reference_edge(
     attrs: Dict[str, object] = {}
     if constraint_name:
         attrs["constraint_name"] = constraint_name
+    if on_delete is not None:
+        attrs["on_delete"] = on_delete
+    if on_update is not None:
+        attrs["on_update"] = on_update
 
     add_edge_if_absent(
         graph,
@@ -973,7 +1057,7 @@ def parse_create_table_statement(statement: str) -> ParsedCreateTable:
             )
 
         if column.reference is not None:
-            target_table_fqn, target_column = column.reference
+            target_table_fqn, target_column, on_delete, on_update = column.reference
             constraint_name = default_constraint_name(
                 table_name,
                 ConstraintType.FOREIGN_KEY,
@@ -988,6 +1072,8 @@ def parse_create_table_statement(statement: str) -> ParsedCreateTable:
                 owner_column=column.name,
                 columns=(column.name,),
                 references=(target_table_fqn, (target_column,)),
+                on_delete=on_delete,
+                on_update=on_update,
             )
 
             target_schema, target_table = split_qualified_name(target_table_fqn)
@@ -1000,6 +1086,8 @@ def parse_create_table_statement(statement: str) -> ParsedCreateTable:
                     target_table=target_table,
                     target_column=target_column,
                     constraint_name=constraint_name,
+                    on_delete=on_delete,
+                    on_update=on_update,
                 )
             )
 
@@ -1016,6 +1104,8 @@ def parse_create_table_statement(statement: str) -> ParsedCreateTable:
             columns=constraint.columns,
             expression=constraint.expression,
             references=constraint.references,
+            on_delete=constraint.on_delete,
+            on_update=constraint.on_update,
         )
 
         if constraint.constraint_type == ConstraintType.FOREIGN_KEY and constraint.references is not None:
@@ -1032,6 +1122,8 @@ def parse_create_table_statement(statement: str) -> ParsedCreateTable:
                         target_table=target_table,
                         target_column=target_column,
                         constraint_name=constraint.name,
+                        on_delete=constraint.on_delete,
+                        on_update=constraint.on_update,
                     )
                 )
 
@@ -1097,116 +1189,140 @@ def merge_graphs(graphs: Sequence[SchemaGraph]) -> SchemaGraph:
     return merged
 
 
-def remove_edge(graph: SchemaGraph, edge_id: str) -> None:
-    edge = graph.get_edge(edge_id)
-    if edge is None:
-        return
-
-    graph.outgoing.get(edge.source_id, set()).discard(edge_id)
-    graph.incoming.get(edge.target_id, set()).discard(edge_id)
-    graph.edges.pop(edge_id, None)
-
-
-def remove_vertex_and_incident_edges(graph: SchemaGraph, object_id: str) -> None:
-    if graph.get_vertex(object_id) is None:
-        return
-
-    incident = set(graph.outgoing.get(object_id, set())) | set(graph.incoming.get(object_id, set()))
-
-    for edge_id in list(incident):
-        remove_edge(graph, edge_id)
-
-    graph.outgoing.pop(object_id, None)
-    graph.incoming.pop(object_id, None)
-    graph.vertices.pop(object_id, None)
-
-
-def apply_drop_table_statement(statement: str, graph: SchemaGraph) -> None:
+def parse_drop_table_statement(statement: str, graph: SchemaGraph) -> None:
     match = DROP_TABLE_RE.match(statement.strip())
     if not match:
         raise ValueError(f"Unsupported DROP TABLE statement: {statement}")
 
     schema_name, table_name = parse_table_name(match.group("table").strip())
     table_id = make_table_id(table_name, schema_name)
-
-    for vertex in list(graph.vertices.values()):
-        attrs = vertex.attr_dict()
-        if attrs.get("schema") == schema_name and attrs.get("table") == table_name:
-            remove_vertex_and_incident_edges(graph, vertex.object_id)
-
     remove_vertex_and_incident_edges(graph, table_id)
 
 
-def apply_drop_index_statement(statement: str, graph: SchemaGraph) -> None:
+def parse_drop_index_statement(statement: str, graph: SchemaGraph) -> None:
     match = DROP_INDEX_RE.match(statement.strip())
     if not match:
         raise ValueError(f"Unsupported DROP INDEX statement: {statement}")
 
     schema_name, index_name = parse_index_name(match.group("index").strip())
+    # Индекс id требует table_name, поэтому удаляем по последнему компоненту имени.
+    for vertex_id, vertex in list(graph.vertices.items()):
+        if vertex.name == index_name:
+            remove_vertex_and_incident_edges(graph, vertex_id)
 
-    for index in list(graph.find_vertices_by_type(ObjectType.INDEX)):
-        if index.name == index_name and index.attr_dict().get("schema") == schema_name:
-            remove_vertex_and_incident_edges(graph, index.object_id)
+
+def rename_column(
+    graph: SchemaGraph,
+    schema_name: str,
+    table_name: str,
+    old_column: str,
+    new_column: str,
+) -> None:
+    old_name = normalize_column_name(strip_quotes(old_column))
+    new_name = normalize_column_name(strip_quotes(new_column))
+
+    old_id = make_column_id(table_name, old_name, schema_name)
+    new_id = make_column_id(table_name, new_name, schema_name)
+
+    obj = graph.get_vertex(old_id)
+    if obj is None:
+        raise ValueError(f"Column does not exist: {old_id}")
+
+    attrs = obj.attr_dict()
+    attrs["name"] = new_name
+
+    graph.vertices.pop(old_id)
+    graph.vertices[new_id] = SchemaObject(
+        object_id=new_id,
+        object_type=obj.object_type,
+        name=new_name,
+        attributes=tuple(sorted(attrs.items())),
+    )
+
+    incident_edges = (
+        set(graph.outgoing.get(old_id, set()))
+        | set(graph.incoming.get(old_id, set()))
+    )
+
+    for edge_id in list(incident_edges):
+        edge = graph.get_edge(edge_id)
+        if edge is None:
+            continue
+
+        remove_edge(graph, edge_id)
+
+        source_id = new_id if edge.source_id == old_id else edge.source_id
+        target_id = new_id if edge.target_id == old_id else edge.target_id
+
+        add_edge_if_absent(
+            graph,
+            build_edge(
+                edge_type=edge.edge_type,
+                source_id=source_id,
+                target_id=target_id,
+                **edge.attr_dict(),
+            ),
+        )
 
 
 def set_column_nullable(
     graph: SchemaGraph,
     schema_name: str,
     table_name: str,
-    raw_column_name: str,
+    column_name: str,
     nullable: bool,
 ) -> None:
-    column_name = normalize_column_name(strip_quotes(raw_column_name))
-    column_id = make_column_id(table_name, column_name, schema_name)
+    normalized_column = normalize_column_name(strip_quotes(column_name))
+    column_id = make_column_id(table_name, normalized_column, schema_name)
+    obj = graph.get_vertex(column_id)
 
-    column = graph.get_vertex(column_id)
-    if column is None:
-        raise ValueError(f"Cannot alter unknown column: {column_id}")
+    if obj is None:
+        raise ValueError(f"Column does not exist: {column_id}")
 
-    attrs = column.attr_dict().copy()
+    attrs = obj.attr_dict()
     attrs["nullable"] = nullable
 
-    graph.vertices[column_id] = build_column(
-        table_name=table_name,
-        column_name=column_name,
-        schema_name=schema_name,
-        **attrs,
+    graph.vertices[column_id] = SchemaObject(
+        object_id=obj.object_id,
+        object_type=obj.object_type,
+        name=obj.name,
+        attributes=tuple(sorted(attrs.items())),
     )
 
 
-def set_column_type(
+def alter_column_type(
     graph: SchemaGraph,
     schema_name: str,
     table_name: str,
-    raw_column_name: str,
-    raw_data_type: str,
+    column_name: str,
+    data_type_raw: str,
 ) -> None:
-    column_name = normalize_column_name(strip_quotes(raw_column_name))
-    column_id = make_column_id(table_name, column_name, schema_name)
+    normalized_column = normalize_column_name(strip_quotes(column_name))
+    column_id = make_column_id(table_name, normalized_column, schema_name)
+    obj = graph.get_vertex(column_id)
 
-    column = graph.get_vertex(column_id)
-    if column is None:
-        raise ValueError(f"Cannot alter unknown column: {column_id}")
+    if obj is None:
+        raise ValueError(f"Column does not exist: {column_id}")
 
-    new_type_raw = collapse_spaces(raw_data_type).lower()
-    new_type = canonical_data_type_name(normalize_data_type(new_type_raw))
+    normalized_raw = collapse_spaces(data_type_raw).lower()
+    canonical_type = canonical_data_type_name(normalize_data_type(normalized_raw))
 
-    attrs = column.attr_dict().copy()
-    attrs["data_type"] = new_type
-    attrs["data_type_raw"] = new_type_raw
+    attrs = obj.attr_dict()
+    attrs["data_type"] = canonical_type
+    attrs["data_type_raw"] = normalized_raw
 
-    graph.vertices[column_id] = build_column(
-        table_name=table_name,
-        column_name=column_name,
-        schema_name=schema_name,
-        **attrs,
+    graph.vertices[column_id] = SchemaObject(
+        object_id=obj.object_id,
+        object_type=obj.object_type,
+        name=obj.name,
+        attributes=tuple(sorted(attrs.items())),
     )
 
     for edge in list(graph.edges_from(column_id)):
         if edge.edge_type == EdgeType.TYPED_AS:
             remove_edge(graph, edge.edge_id)
 
-    dtype_id = ensure_data_type(graph, new_type)
+    dtype_id = ensure_data_type(graph, canonical_type)
     add_edge_if_absent(
         graph,
         build_edge(
@@ -1217,95 +1333,69 @@ def set_column_type(
     )
 
 
-def rename_column(
-    graph: SchemaGraph,
-    schema_name: str,
-    table_name: str,
-    old_raw: str,
-    new_raw: str,
-) -> None:
-    old_name = normalize_column_name(strip_quotes(old_raw))
-    new_name = normalize_column_name(strip_quotes(new_raw))
-
-    old_id = make_column_id(table_name, old_name, schema_name)
-    new_id = make_column_id(table_name, new_name, schema_name)
-
-    old_obj = graph.get_vertex(old_id)
-    if old_obj is None:
-        raise ValueError(f"Cannot rename unknown column: {old_id}")
-
-    attrs = old_obj.attr_dict().copy()
-    attrs["name"] = new_name
-
-    graph.vertices.pop(old_id)
-    graph.vertices[new_id] = build_column(
-        table_name=table_name,
-        column_name=new_name,
-        schema_name=schema_name,
-        **attrs,
-    )
-
-    graph.outgoing.setdefault(new_id, set())
-    graph.incoming.setdefault(new_id, set())
-
-    for edge in list(graph.edges.values()):
-        changed = False
-        source_id = edge.source_id
-        target_id = edge.target_id
-
-        if source_id == old_id:
-            source_id = new_id
-            changed = True
-        if target_id == old_id:
-            target_id = new_id
-            changed = True
-
-        if not changed:
-            continue
-
-        remove_edge(graph, edge.edge_id)
-
-        new_edge = build_edge(
-            edge_type=edge.edge_type,
-            source_id=source_id,
-            target_id=target_id,
-            **edge.attr_dict(),
-        )
-        add_edge_if_absent(graph, new_edge)
-
-    graph.outgoing.pop(old_id, None)
-    graph.incoming.pop(old_id, None)
-
-
 def parse_alter_table_statement(statement: str, graph: SchemaGraph) -> None:
     match = ALTER_TABLE_RE.match(statement.strip())
     if not match:
         raise ValueError(f"Unsupported ALTER TABLE statement: {statement}")
 
     schema_name, table_name = parse_table_name(match.group("table").strip())
-    action = collapse_spaces(match.group("action"))
+    action = match.group("action").strip()
 
     add_column_match = ALTER_ADD_COLUMN_RE.match(action)
     if add_column_match:
         column = parse_column_definition(add_column_match.group("definition"))
         ensure_column(graph, schema_name, table_name, column)
 
+        if column.is_primary_key:
+            constraint_name = default_constraint_name(
+                table_name,
+                ConstraintType.PRIMARY_KEY,
+                (column.name,),
+            )
+            add_constraint_object(
+                graph=graph,
+                schema_name=schema_name,
+                table_name=table_name,
+                constraint_name=constraint_name,
+                constraint_type=ConstraintType.PRIMARY_KEY,
+                owner_column=column.name,
+                columns=(column.name,),
+            )
+
+        if column.is_unique:
+            constraint_name = default_constraint_name(
+                table_name,
+                ConstraintType.UNIQUE,
+                (column.name,),
+            )
+            add_constraint_object(
+                graph=graph,
+                schema_name=schema_name,
+                table_name=table_name,
+                constraint_name=constraint_name,
+                constraint_type=ConstraintType.UNIQUE,
+                owner_column=column.name,
+                columns=(column.name,),
+            )
+
         if column.reference is not None:
-            target_table_fqn, target_column = column.reference
+            target_table_fqn, target_column, on_delete, on_update = column.reference
             constraint_name = default_constraint_name(
                 table_name,
                 ConstraintType.FOREIGN_KEY,
                 (column.name,),
             )
             add_constraint_object(
-                graph,
-                schema_name,
-                table_name,
-                constraint_name,
-                ConstraintType.FOREIGN_KEY,
+                graph=graph,
+                schema_name=schema_name,
+                table_name=table_name,
+                constraint_name=constraint_name,
+                constraint_type=ConstraintType.FOREIGN_KEY,
                 owner_column=column.name,
                 columns=(column.name,),
                 references=(target_table_fqn, (target_column,)),
+                on_delete=on_delete,
+                on_update=on_update,
             )
             add_reference_edge(
                 graph,
@@ -1315,6 +1405,8 @@ def parse_alter_table_statement(statement: str, graph: SchemaGraph) -> None:
                 target_table_fqn=target_table_fqn,
                 target_column=target_column,
                 constraint_name=constraint_name,
+                on_delete=on_delete,
+                on_update=on_update,
             )
         return
 
@@ -1328,22 +1420,22 @@ def parse_alter_table_statement(statement: str, graph: SchemaGraph) -> None:
     rename_column_match = ALTER_RENAME_COLUMN_RE.match(action)
     if rename_column_match:
         rename_column(
-            graph=graph,
-            schema_name=schema_name,
-            table_name=table_name,
-            old_raw=rename_column_match.group("old"),
-            new_raw=rename_column_match.group("new"),
+            graph,
+            schema_name,
+            table_name,
+            rename_column_match.group("old"),
+            rename_column_match.group("new"),
         )
         return
 
     alter_type_match = ALTER_ALTER_COLUMN_TYPE_RE.match(action)
     if alter_type_match:
-        set_column_type(
-            graph=graph,
-            schema_name=schema_name,
-            table_name=table_name,
-            raw_column_name=alter_type_match.group("column"),
-            raw_data_type=alter_type_match.group("data_type"),
+        alter_column_type(
+            graph,
+            schema_name,
+            table_name,
+            alter_type_match.group("column"),
+            alter_type_match.group("data_type"),
         )
         return
 
@@ -1380,6 +1472,8 @@ def parse_alter_table_statement(statement: str, graph: SchemaGraph) -> None:
             columns=constraint.columns,
             expression=constraint.expression,
             references=constraint.references,
+            on_delete=constraint.on_delete,
+            on_update=constraint.on_update,
         )
 
         if constraint.constraint_type == ConstraintType.FOREIGN_KEY and constraint.references is not None:
@@ -1393,6 +1487,8 @@ def parse_alter_table_statement(statement: str, graph: SchemaGraph) -> None:
                     target_table_fqn=target_table_fqn,
                     target_column=target_column,
                     constraint_name=constraint.name,
+                    on_delete=constraint.on_delete,
+                    on_update=constraint.on_update,
                 )
         return
 
@@ -1442,6 +1538,8 @@ def parse_ddl_to_graph(sql: str) -> SchemaGraph:
             target_table_fqn=target_table_fqn,
             target_column=ref.target_column,
             constraint_name=ref.constraint_name,
+            on_delete=ref.on_delete,
+            on_update=ref.on_update,
         )
 
     for statement in deferred_statements:
@@ -1451,12 +1549,12 @@ def parse_ddl_to_graph(sql: str) -> SchemaGraph:
             parse_create_index_statement(statement, graph)
         elif normalized.startswith("alter table"):
             parse_alter_table_statement(statement, graph)
-        elif normalized.startswith("drop index"):
-            apply_drop_index_statement(statement, graph)
         elif normalized.startswith("drop table"):
-            apply_drop_table_statement(statement, graph)
+            parse_drop_table_statement(statement, graph)
+        elif normalized.startswith("drop index"):
+            parse_drop_index_statement(statement, graph)
         else:
-            raise ValueError(f"Unsupported statement type: {statement}")
+            raise ValueError(f"Unsupported SQL statement: {statement}")
 
     graph.validate()
     return graph

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Optional, Tuple
 
 from src.conflict_detector.core.models import (
     AddOperation,
@@ -19,8 +19,11 @@ from src.conflict_detector.core.models import (
 )
 from src.conflict_detector.graph.builders import (
     build_data_type,
+    build_edge,
     canonical_data_type_name,
+    make_column_id,
     make_data_type_id,
+    make_table_id,
 )
 from src.conflict_detector.graph.schema_graph import SchemaGraph
 
@@ -150,6 +153,20 @@ def is_edge_add_operation(op: AddOperation) -> bool:
     return {"edge_type", "source_id", "target_id"}.issubset(set(params.keys()))
 
 
+def add_edge_if_absent(graph: SchemaGraph, edge: SchemaEdge) -> None:
+    existing_edge = graph.get_edge(edge.edge_id)
+
+    if existing_edge is not None:
+        if existing_edge == edge:
+            return
+
+        raise ValueError(
+            f"Cannot add duplicate edge with different payload: {edge.edge_id}"
+        )
+
+    graph.add_edge(edge)
+
+
 def ensure_builtin_type_for_typed_as_edge(graph: SchemaGraph, edge: SchemaEdge) -> None:
     """
     Если добавляется typedAs-ребро Column -> builtin DataType,
@@ -170,6 +187,179 @@ def ensure_builtin_type_for_typed_as_edge(graph: SchemaGraph, edge: SchemaEdge) 
     graph.add_vertex(build_data_type(type_name))
 
 
+def ensure_data_type_vertex(graph: SchemaGraph, data_type: str) -> str:
+    canonical_type = canonical_data_type_name(data_type)
+    dtype_id = make_data_type_id(canonical_type)
+
+    if graph.get_vertex(dtype_id) is None:
+        graph.add_vertex(build_data_type(canonical_type))
+
+    return dtype_id
+
+
+def ensure_column_structural_edges(graph: SchemaGraph, obj: SchemaObject) -> None:
+    """
+    Add(Column) должен добавлять не только вершину Column,
+    но и обязательные рёбра:
+
+    Table --contains--> Column
+    Column --typedAs--> DataType
+
+    Иначе при merge validation появляются нарушения:
+    - INV_COLUMN_SINGLE_OWNER_TABLE;
+    - INV_COLUMN_SINGLE_DATATYPE.
+    """
+    if obj.object_type != ObjectType.COLUMN:
+        return
+
+    attrs = obj.attr_dict()
+
+    schema_name = str(attrs.get("schema", "public"))
+    table_name = attrs.get("table")
+    data_type = attrs.get("data_type") or attrs.get("data_type_raw")
+
+    if table_name is None:
+        raise ValueError(f"Column '{obj.object_id}' misses table attribute")
+
+    table_id = make_table_id(
+        table_name=str(table_name),
+        schema_name=schema_name,
+    )
+
+    if graph.get_vertex(table_id) is None:
+        raise ValueError(
+            f"Cannot add column '{obj.object_id}': "
+            f"missing owner table '{table_id}'"
+        )
+
+    contains_edge = build_edge(
+        edge_type=EdgeType.CONTAINS,
+        source_id=table_id,
+        target_id=obj.object_id,
+    )
+    add_edge_if_absent(graph, contains_edge)
+
+    if data_type is None:
+        raise ValueError(f"Column '{obj.object_id}' misses data_type attribute")
+
+    canonical_type = canonical_data_type_name(str(data_type))
+    dtype_id = ensure_data_type_vertex(graph, canonical_type)
+
+    typed_as_edge = build_edge(
+        edge_type=EdgeType.TYPED_AS,
+        source_id=obj.object_id,
+        target_id=dtype_id,
+    )
+    add_edge_if_absent(graph, typed_as_edge)
+
+
+def parse_columns(raw: object) -> Tuple[str, ...]:
+    if raw is None:
+        return tuple()
+
+    return tuple(
+        part.strip()
+        for part in str(raw).split(",")
+        if part.strip()
+    )
+
+
+def infer_constraint_owner_id(obj: SchemaObject) -> str:
+    """
+    В graph builder constraint может принадлежать:
+    - таблице;
+    - колонке, если constraint относится к одной колонке.
+
+    Для inline UNIQUE / NOT NULL / single-column PK обычно owner = column.
+    Для composite constraints owner = table.
+    """
+    attrs = obj.attr_dict()
+
+    schema_name = str(attrs.get("schema", "public"))
+    table_name = attrs.get("table")
+
+    if table_name is None:
+        raise ValueError(f"Constraint '{obj.object_id}' misses table attribute")
+
+    columns = parse_columns(attrs.get("columns"))
+
+    if len(columns) == 1:
+        return make_column_id(
+            table_name=str(table_name),
+            column_name=columns[0],
+            schema_name=schema_name,
+        )
+
+    return make_table_id(
+        table_name=str(table_name),
+        schema_name=schema_name,
+    )
+
+
+def ensure_constraint_structural_edges(graph: SchemaGraph, obj: SchemaObject) -> None:
+    """
+    Add(Constraint) должен восстанавливать hasConstraint-ребро,
+    если оно не было добавлено отдельной операцией.
+    """
+    if obj.object_type != ObjectType.CONSTRAINT:
+        return
+
+    owner_id = infer_constraint_owner_id(obj)
+
+    if graph.get_vertex(owner_id) is None:
+        raise ValueError(
+            f"Cannot add constraint '{obj.object_id}': "
+            f"missing owner '{owner_id}'"
+        )
+
+    edge = build_edge(
+        edge_type=EdgeType.HAS_CONSTRAINT,
+        source_id=owner_id,
+        target_id=obj.object_id,
+    )
+    add_edge_if_absent(graph, edge)
+
+
+def ensure_index_structural_edges(graph: SchemaGraph, obj: SchemaObject) -> None:
+    """
+    Add(Index) должен восстанавливать hasIndex-ребро,
+    если оно не было добавлено отдельной операцией.
+    """
+    if obj.object_type != ObjectType.INDEX:
+        return
+
+    attrs = obj.attr_dict()
+
+    schema_name = str(attrs.get("schema", "public"))
+    table_name = attrs.get("table")
+
+    if table_name is None:
+        raise ValueError(f"Index '{obj.object_id}' misses table attribute")
+
+    table_id = make_table_id(
+        table_name=str(table_name),
+        schema_name=schema_name,
+    )
+
+    if graph.get_vertex(table_id) is None:
+        raise ValueError(
+            f"Cannot add index '{obj.object_id}': missing table '{table_id}'"
+        )
+
+    edge = build_edge(
+        edge_type=EdgeType.HAS_INDEX,
+        source_id=table_id,
+        target_id=obj.object_id,
+    )
+    add_edge_if_absent(graph, edge)
+
+
+def ensure_object_structural_edges(graph: SchemaGraph, obj: SchemaObject) -> None:
+    ensure_column_structural_edges(graph, obj)
+    ensure_constraint_structural_edges(graph, obj)
+    ensure_index_structural_edges(graph, obj)
+
+
 def apply_add_operation(graph: SchemaGraph, op: AddOperation) -> SchemaGraph:
     new_graph = clone_graph(graph)
 
@@ -177,29 +367,33 @@ def apply_add_operation(graph: SchemaGraph, op: AddOperation) -> SchemaGraph:
         edge = make_schema_edge_from_add(op)
 
         ensure_builtin_type_for_typed_as_edge(new_graph, edge)
+        add_edge_if_absent(new_graph, edge)
 
-        existing_edge = new_graph.get_edge(edge.edge_id)
-        if existing_edge is not None:
-            if existing_edge == edge:
-                return new_graph
-            raise ValueError(
-                f"Cannot add duplicate edge with different payload: {edge.edge_id}"
-            )
-
-        new_graph.add_edge(edge)
         return new_graph
 
     obj = make_schema_object_from_add(op)
 
     existing_obj = new_graph.get_vertex(obj.object_id)
+
     if existing_obj is not None:
-        if existing_obj == obj:
-            return new_graph
-        raise ValueError(
-            f"Cannot add duplicate object with different payload: {obj.object_id}"
-        )
+        if existing_obj != obj:
+            raise ValueError(
+                f"Cannot add duplicate object with different payload: "
+                f"{obj.object_id}"
+            )
+
+        # Даже если вершина уже есть, structural edges могли отсутствовать.
+        ensure_object_structural_edges(new_graph, existing_obj)
+        return new_graph
 
     new_graph.add_vertex(obj)
+
+    # Важное исправление:
+    # Add(Column), Add(Constraint), Add(Index) должны восстанавливать
+    # обязательные структурные рёбра графа, иначе merge validation
+    # видит некорректную схему.
+    ensure_object_structural_edges(new_graph, obj)
+
     return new_graph
 
 
@@ -249,13 +443,6 @@ def apply_drop_operation(graph: SchemaGraph, op: DropOperation) -> SchemaGraph:
     return new_graph
 
 
-def ensure_data_type_vertex(graph: SchemaGraph, data_type: str) -> str:
-    dtype_id = make_data_type_id(data_type)
-    if graph.get_vertex(dtype_id) is None:
-        graph.add_vertex(build_data_type(data_type))
-    return dtype_id
-
-
 def update_column_typed_as_edge(
     graph: SchemaGraph,
     column_id: str,
@@ -273,12 +460,10 @@ def update_column_typed_as_edge(
     for edge_id in outgoing_typed_as:
         remove_edge(graph, edge_id)
 
-    new_edge = SchemaEdge(
-        edge_id=f"{EdgeType.TYPED_AS.value}:{column_id}->{dtype_id}",
+    new_edge = build_edge(
         edge_type=EdgeType.TYPED_AS,
         source_id=column_id,
         target_id=dtype_id,
-        attributes=freeze_attrs({}),
     )
     graph.add_edge(new_edge)
 
@@ -293,10 +478,15 @@ def apply_modify_operation(graph: SchemaGraph, op: ModifyOperation) -> SchemaGra
         if is_builtin_data_type_object(obj):
             return new_graph
 
-        if obj.object_type == ObjectType.COLUMN and "data_type" in delta:
-            raw_type = str(delta["data_type"])
-            delta["data_type"] = canonical_data_type_name(raw_type)
-            delta.setdefault("data_type_raw", raw_type)
+        if obj.object_type == ObjectType.COLUMN:
+            if "data_type_raw" in delta and "data_type" not in delta:
+                raw_type = str(delta["data_type_raw"])
+                delta["data_type"] = canonical_data_type_name(raw_type)
+
+            if "data_type" in delta:
+                raw_type = str(delta.get("data_type_raw", delta["data_type"]))
+                delta["data_type"] = canonical_data_type_name(raw_type)
+                delta["data_type_raw"] = raw_type
 
         updated_attrs = attrs_with_delta(obj, delta)
         updated_obj = rebuild_object(obj, new_attrs=updated_attrs)
@@ -480,6 +670,8 @@ def apply_operation(graph: SchemaGraph, op: Operation) -> SchemaGraph:
 
 def apply_operations(graph: SchemaGraph, operations: Iterable[Operation]) -> SchemaGraph:
     current = clone_graph(graph)
+
     for op in operations:
         current = apply_operation(current, op)
+
     return current
