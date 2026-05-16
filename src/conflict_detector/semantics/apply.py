@@ -240,7 +240,7 @@ def ensure_column_structural_edges(graph: SchemaGraph, obj: SchemaObject) -> Non
     add_edge_if_absent(graph, contains_edge)
 
     if data_type is None:
-        raise ValueError(f"Column '{obj.object_id}' misses data_type attribute")
+        return
 
     canonical_type = canonical_data_type_name(str(data_type))
     dtype_id = ensure_data_type_vertex(graph, canonical_type)

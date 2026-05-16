@@ -196,15 +196,19 @@ def build_merge_candidate(
         if not is_commutative:
             conflicts.append(make_non_commutative_conflict())
 
+    diagnostic_graph = path_ab.graph or path_ba.graph
+
     if not both_constructed or not both_valid:
+        invariant_result = (
+            path_ab.invariant_result
+            if path_ab.invariant_result.violations
+            else path_ba.invariant_result
+        )
+
         return MergeAttemptResult(
             is_defined=False,
-            merged_graph=None,
-            invariant_result=(
-                path_ab.invariant_result
-                if path_ab.invariant_result.violations
-                else path_ba.invariant_result
-            ),
+            merged_graph=diagnostic_graph,
+            invariant_result=invariant_result,
             conflicts=tuple(conflicts),
             error_message=(
                 "Merge is undefined: at least one composition order "
@@ -218,7 +222,7 @@ def build_merge_candidate(
     if is_commutative is False:
         return MergeAttemptResult(
             is_defined=False,
-            merged_graph=None,
+            merged_graph=diagnostic_graph,
             invariant_result=path_ab.invariant_result,
             conflicts=tuple(conflicts),
             error_message=(

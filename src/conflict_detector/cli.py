@@ -4,13 +4,15 @@ import argparse
 from pathlib import Path
 from time import perf_counter
 
-from src.conflict_detector.pipeline.analyze_three_way_merge_from_ddl import (
-    analyze_three_way_merge_from_ddl,
+from src.conflict_detector.parser.ddl_parser import parse_ddl_to_graph
+from src.conflict_detector.pipeline.analyze_three_way_merge import (
+    analyze_three_way_merge_with_artifacts,
 )
 from src.conflict_detector.pipeline.analyze_repo import analyze_repo
 from src.conflict_detector.reporting.json_report import save_json_report
 from src.conflict_detector.reporting.severity import DEFAULT_IMPACT_THRESHOLD
 from src.conflict_detector.reporting.text_report import build_text_report
+from src.conflict_detector.visualization.graphviz_export import export_graph
 
 
 def read_file(path: str | Path) -> str:
@@ -48,6 +50,12 @@ def main() -> None:
     parser.add_argument("--quiet", action="store_true")
 
     parser.add_argument(
+        "--no-graphs",
+        action="store_true",
+        help="Disable Graphviz DOT/PNG schema graph export",
+    )
+
+    parser.add_argument(
         "--impact-threshold",
         type=int,
         default=DEFAULT_IMPACT_THRESHOLD,
@@ -57,6 +65,9 @@ def main() -> None:
     args = parser.parse_args()
 
     started_at = perf_counter()
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     repo_path: str | None = None
     branch_a: str | None = None
@@ -70,11 +81,34 @@ def main() -> None:
         a_ddl = read_file(args.a)
         b_ddl = read_file(args.b)
 
-        result = analyze_three_way_merge_from_ddl(
-            base_ddl=base_ddl,
-            branch_a_ddl=a_ddl,
-            branch_b_ddl=b_ddl,
+        base_graph = parse_ddl_to_graph(base_ddl)
+        branch_a_graph = parse_ddl_to_graph(a_ddl)
+        branch_b_graph = parse_ddl_to_graph(b_ddl)
+
+        artifacts = analyze_three_way_merge_with_artifacts(
+            base_graph=base_graph,
+            branch_a_graph=branch_a_graph,
+            branch_b_graph=branch_b_graph,
         )
+
+        result = artifacts.result
+
+        if not args.no_graphs:
+            export_graph(
+                base_graph,
+                out_dir / "base_graph",
+                "Base schema graph S0",
+            )
+            export_graph(
+                branch_a_graph,
+                out_dir / "branch_a_graph",
+                "Branch A schema graph SA",
+            )
+            export_graph(
+                branch_b_graph,
+                out_dir / "branch_b_graph",
+                "Branch B schema graph SB",
+            )
 
     else:
         if not args.branch_a or not args.branch_b:
@@ -91,9 +125,6 @@ def main() -> None:
         )
 
     execution_time_seconds = perf_counter() - started_at
-
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     json_path = out_dir / args.json_name
     text_path = out_dir / args.text_name
@@ -123,6 +154,12 @@ def main() -> None:
     if not args.quiet:
         print(text_report)
         print(f"\nReports saved to: {out_dir}")
+
+        if args.base and not args.no_graphs:
+            print("Schema graphs saved:")
+            print(f"- {out_dir / 'base_graph.dot'}")
+            print(f"- {out_dir / 'branch_a_graph.dot'}")
+            print(f"- {out_dir / 'branch_b_graph.dot'}")
 
 
 if __name__ == "__main__":

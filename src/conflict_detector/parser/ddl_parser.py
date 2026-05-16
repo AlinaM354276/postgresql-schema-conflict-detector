@@ -650,6 +650,9 @@ def default_constraint_name(
     columns: Sequence[str],
     suffix: Optional[str] = None,
 ) -> str:
+    if constraint_type == ConstraintType.PRIMARY_KEY:
+        return normalize_constraint_name(f"pk_{table_name}")
+
     col_part = "_".join(columns) if columns else "table"
     base = f"{constraint_type.value.lower()}_{table_name}_{col_part}"
     if suffix:
@@ -664,6 +667,12 @@ def parse_table_constraint(definition: str, table_name: str) -> Optional[TableCo
     pk_match = TABLE_PK_RE.match(body)
     if pk_match:
         columns = parse_column_list(pk_match.group("columns"))
+
+        if len(columns) != 1:
+            raise ValueError(
+                "Composite PRIMARY KEY is not supported yet"
+            )
+
         name = explicit_name or default_constraint_name(
             table_name,
             ConstraintType.PRIMARY_KEY,
@@ -1550,7 +1559,9 @@ def parse_ddl_to_graph(sql: str) -> SchemaGraph:
         elif normalized.startswith("alter table"):
             parse_alter_table_statement(statement, graph)
         elif normalized.startswith("drop table"):
-            parse_drop_table_statement(statement, graph)
+            raise ValueError(
+                f"DROP TABLE is not supported in parse_ddl_to_graph: {statement}"
+            )
         elif normalized.startswith("drop index"):
             parse_drop_index_statement(statement, graph)
         else:

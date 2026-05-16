@@ -260,6 +260,9 @@ class ConflictDetector:
                     dependency_trace=dependency_trace,
                 )
 
+                if should_skip_as_semantically_compatible(operation_a, operation_b):
+                    continue
+
                 for rule in self.rules:
                     check_result = rule.check(context)
                     rule_conflicts = iter_rule_conflicts(check_result)

@@ -662,6 +662,128 @@ def check_constraints_contradict(left: AddOperation, right: AddOperation) -> boo
 
 
 @dataclass(frozen=True)
+class R1DropVsModifyRule(BaseConflictRule):
+    def check(self, context: RuleContext) -> RuleCheckResult:
+        a = context.operation_a
+        b = context.operation_b
+
+        if isinstance(a, DropOperation) and isinstance(b, ModifyOperation):
+            if a.target == b.target:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message="Object is dropped in one branch and modified in another branch.",
+                        severity=SeverityLevel.HIGH,
+                        context=context,
+                        object_ids={a.target},
+                        metadata={"kind": "drop_vs_modify"},
+                    )
+                )
+
+        if isinstance(a, ModifyOperation) and isinstance(b, DropOperation):
+            if a.target == b.target:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message="Object is modified in one branch and dropped in another branch.",
+                        severity=SeverityLevel.HIGH,
+                        context=context,
+                        object_ids={a.target},
+                        metadata={"kind": "modify_vs_drop"},
+                    )
+                )
+
+        return RuleCheckResult.no_match()
+
+
+@dataclass(frozen=True)
+class R2DropVsRenameRule(BaseConflictRule):
+    def check(self, context: RuleContext) -> RuleCheckResult:
+        a = context.operation_a
+        b = context.operation_b
+
+        if isinstance(a, DropOperation) and isinstance(b, RenameOperation):
+            if a.target == b.target:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message="Object is dropped in one branch and renamed in another branch.",
+                        severity=SeverityLevel.HIGH,
+                        context=context,
+                        object_ids={a.target},
+                        metadata={"kind": "drop_vs_rename"},
+                    )
+                )
+
+        if isinstance(a, RenameOperation) and isinstance(b, DropOperation):
+            if a.target == b.target:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message="Object is renamed in one branch and dropped in another branch.",
+                        severity=SeverityLevel.HIGH,
+                        context=context,
+                        object_ids={a.target},
+                        metadata={"kind": "rename_vs_drop"},
+                    )
+                )
+
+        return RuleCheckResult.no_match()
+
+
+@dataclass(frozen=True)
+class R3RenameVsRenameRule(BaseConflictRule):
+    def check(self, context: RuleContext) -> RuleCheckResult:
+        a = context.operation_a
+        b = context.operation_b
+
+        if isinstance(a, RenameOperation) and isinstance(b, RenameOperation):
+            if a.target == b.target and a.new_name != b.new_name:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message="The same object is renamed differently in two branches.",
+                        severity=SeverityLevel.HIGH,
+                        context=context,
+                        object_ids={a.target},
+                        metadata={
+                            "kind": "rename_vs_rename",
+                            "new_name_a": a.new_name,
+                            "new_name_b": b.new_name,
+                        },
+                    )
+                )
+
+        return RuleCheckResult.no_match()
+
+
+@dataclass(frozen=True)
+class R4ModifyVsModifyRule(BaseConflictRule):
+    def check(self, context: RuleContext) -> RuleCheckResult:
+        a = context.operation_a
+        b = context.operation_b
+
+        if isinstance(a, ModifyOperation) and isinstance(b, ModifyOperation):
+            if a.target == b.target and a.delta != b.delta:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message="The same object is modified differently in two branches.",
+                        severity=SeverityLevel.MEDIUM,
+                        context=context,
+                        object_ids={a.target},
+                        metadata={
+                            "kind": "modify_vs_modify",
+                            "delta_a": dict(a.delta),
+                            "delta_b": dict(b.delta),
+                        },
+                    )
+                )
+
+        return RuleCheckResult.no_match()
+
+
+@dataclass(frozen=True)
 class R3DanglingReferenceRule(BaseConflictRule):
     """
     R3. Ссылка на отсутствующий объект.
@@ -1323,6 +1445,23 @@ class R6TransitiveDependencyConflictRule(BaseConflictRule):
 
 
 BASIC_RULES: List[BaseConflictRule] = [
+    R1DropVsModifyRule(
+        rule_id="R1_DROP_VS_MODIFY",
+        description="Object is dropped in one branch and modified in another",
+    ),
+    R2DropVsRenameRule(
+        rule_id="R2_DROP_VS_RENAME",
+        description="Object is dropped in one branch and renamed in another",
+    ),
+    R3RenameVsRenameRule(
+        rule_id="R3_RENAME_VS_RENAME",
+        description="Same object is renamed differently in two branches",
+    ),
+    R4ModifyVsModifyRule(
+        rule_id="R4_MODIFY_VS_MODIFY",
+        description="Same object is modified differently in two branches",
+    ),
+
     R3DanglingReferenceRule(
         rule_id="R3_DANGLING_REFERENCE",
         description="Reference points to object removed by table/object deletion",
@@ -1352,4 +1491,3 @@ BASIC_RULES: List[BaseConflictRule] = [
         description="Dependency-induced conflict through impact intersection",
     ),
 ]
-
