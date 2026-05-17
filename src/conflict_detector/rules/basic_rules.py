@@ -23,6 +23,9 @@ from src.conflict_detector.rules.base import (
     RuleCheckResult,
     RuleContext,
 )
+from src.conflict_detector.semantics.dependency_closure import (
+    compute_dependency_closure,
+)
 
 
 def op_target(operation: Operation) -> str | None:
@@ -447,6 +450,45 @@ def index_depends_on_changed_column(
 
 def is_modify_index_operation(op: Operation, graph) -> bool:
     return isinstance(op, ModifyOperation) and is_index_object(graph, op.target)
+
+
+def is_modify_constraint_operation(op: Operation, graph) -> bool:
+    return isinstance(op, ModifyOperation) and is_constraint_object(graph, op.target)
+
+
+def is_modify_dependency_object(op: Operation, graph) -> bool:
+    return (
+        is_modify_index_operation(op, graph)
+        or is_modify_constraint_operation(op, graph)
+    )
+
+
+def transitive_dependency_intersection(
+    graph,
+    source_target: str,
+    dependent_target: str,
+) -> tuple[str, ...]:
+    """
+    Проверяет, попадает ли dependent_target в транзитивное замыкание
+    зависимостей source_target.
+
+    Используется для R6 без изменения старого detector/impact API.
+    """
+    if graph is None:
+        return tuple()
+
+    closure = compute_dependency_closure(
+        graph=graph,
+        roots=[source_target],
+        max_depth=6,
+    )
+
+    affected = closure.as_set()
+
+    if dependent_target not in affected:
+        return tuple()
+
+    return tuple(sorted(affected))
 
 
 def is_modify_column_type_operation(op: Operation, graph) -> bool:
@@ -1421,25 +1463,72 @@ class R6TransitiveDependencyConflictRule(BaseConflictRule):
                     )
                 )
 
-        # ---------- общий R6 ----------
-
-        if not context.shared_impact:
-            return RuleCheckResult.no_match()
-
-        # Изменение типа само по себе не должно уходить в общий R6:
-        # type inconsistency — это R2, а специальный index case обработан выше.
-        if isinstance(a, ModifyOperation) and type_changed(a):
-            return RuleCheckResult.no_match()
-
-        if isinstance(b, ModifyOperation) and type_changed(b):
-            return RuleCheckResult.no_match()
-
-        # Add/Add-сценарии — это R4 или не конфликт.
-        if isinstance(a, AddOperation) and isinstance(b, AddOperation):
-            return RuleCheckResult.no_match()
+        # ---------- общий R6 через dependency closure ----------
 
         if operations_are_identical_or_compatible(a, b):
             return RuleCheckResult.no_match()
+
+        # Drop-сценарии выше уже отсеяны как R1/R3.
+        # Add/Add — это R4 или совместимое расширение.
+        if isinstance(a, AddOperation) and isinstance(b, AddOperation):
+            return RuleCheckResult.no_match()
+
+        # Чтобы не ловить ложные конфликты между колонками одной таблицы,
+        # общий R6 включаем только для Modify зависимых объектов:
+        # Index / Constraint.
+        if isinstance(a, ModifyOperation) and is_modify_dependency_object(b, context.graph_b):
+            shared = transitive_dependency_intersection(
+                graph=context.graph_b,
+                source_target=a.target,
+                dependent_target=b.target,
+            )
+
+            if shared:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message=(
+                            "Operation modifies an object whose dependency closure "
+                            "contains another modified dependency object."
+                        ),
+                        severity=SeverityLevel.MEDIUM,
+                        context=context,
+                        object_ids={a.target, b.target},
+                        metadata={
+                            "kind": "transitive_dependency_conflict",
+                            "source_target": a.target,
+                            "dependent_target": b.target,
+                            "dependency_closure": shared,
+                        },
+                    )
+                )
+
+        if isinstance(b, ModifyOperation) and is_modify_dependency_object(a, context.graph_a):
+            shared = transitive_dependency_intersection(
+                graph=context.graph_a,
+                source_target=b.target,
+                dependent_target=a.target,
+            )
+
+            if shared:
+                return RuleCheckResult.from_conflict(
+                    make_conflict(
+                        rule_id=self.rule_id,
+                        message=(
+                            "Operation modifies an object whose dependency closure "
+                            "contains another modified dependency object."
+                        ),
+                        severity=SeverityLevel.MEDIUM,
+                        context=context,
+                        object_ids={a.target, b.target},
+                        metadata={
+                            "kind": "transitive_dependency_conflict",
+                            "source_target": b.target,
+                            "dependent_target": a.target,
+                            "dependency_closure": shared,
+                        },
+                    )
+                )
 
         return RuleCheckResult.no_match()
 
