@@ -99,16 +99,53 @@ def main() -> None:
                 out_dir / "base_graph",
                 "Base schema graph S0",
             )
+
             export_graph(
                 branch_a_graph,
                 out_dir / "branch_a_graph",
                 "Branch A schema graph SA",
+                reference_graph=base_graph,
+                operations=artifacts.result.operations_a,
+                conflicts=artifacts.result.rule_conflicts,
             )
+
             export_graph(
                 branch_b_graph,
                 out_dir / "branch_b_graph",
                 "Branch B schema graph SB",
+                reference_graph=base_graph,
+                operations=artifacts.result.operations_b,
+                conflicts=artifacts.result.rule_conflicts,
             )
+
+            path_ab = artifacts.result.merge_attempt.path_ab
+            path_ba = artifacts.result.merge_attempt.path_ba
+
+            if (
+                    path_ab.graph is not None
+                    and path_ab.is_constructed
+                    and path_ab.invariant_result.is_valid()
+            ):
+                export_graph(
+                    path_ab.graph,
+                    out_dir / "merge_ab_graph",
+                    "Valid merge path AB: DeltaB(DeltaA(S0))",
+                    conflicts=artifacts.result.rule_conflicts
+                              + artifacts.result.merge_attempt.conflicts,
+                )
+
+            if (
+                    path_ba.graph is not None
+                    and path_ba.is_constructed
+                    and path_ba.invariant_result.is_valid()
+            ):
+                export_graph(
+                    path_ba.graph,
+                    out_dir / "merge_ba_graph",
+                    "Valid merge path BA: DeltaA(DeltaB(S0))",
+                    conflicts=artifacts.result.rule_conflicts
+                              + artifacts.result.merge_attempt.conflicts,
+                )
 
     else:
         if not args.branch_a or not args.branch_b:

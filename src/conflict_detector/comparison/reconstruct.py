@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 from src.conflict_detector.comparison.delta import DeltaDetails
 from src.conflict_detector.comparison.matching import FullMatchingResult
+from src.conflict_detector.comparison.similarity import (
+    RENAME_THRESHOLD,
+    rename_candidate_score,
+)
 from src.conflict_detector.core.models import (
     AddOperation,
     DropOperation,
@@ -91,11 +95,7 @@ def is_edge_connected_to_builtin_data_type(
 
 def is_rename(left: SchemaObject, right: SchemaObject) -> bool:
     """
-    Rename определяется по изменению имени.
-
-    Важно:
-    раньше rename требовал полного совпадения остальных атрибутов.
-    Из-за этого rename + modify превращался в Drop + Add.
+    Rename определяется по изменению имени у уже сопоставленной пары объектов.
     """
     return left.name != right.name
 
@@ -157,6 +157,16 @@ def is_edge_related_to_rename(
     )
 
 
+def is_object_part_of_rename(
+    object_id: str,
+    rename_left_to_right: Dict[str, str],
+) -> bool:
+    return (
+        object_id in rename_left_to_right
+        or object_id in rename_left_to_right.values()
+    )
+
+
 def is_structural_edge(edge: SchemaEdge) -> bool:
     """
     Structural edges являются внутренней частью графового представления.
@@ -192,11 +202,80 @@ def edge_to_reference_operation(
     )
 
 
-def build_rename_map(
+def build_reference_operations_from_added_fk_constraints(
+    right_graph: SchemaGraph,
+    delta_details: DeltaDetails,
+    existing_operations: List[Operation],
+) -> List[Operation]:
+    operations: List[Operation] = []
+
+    existing_refs = {
+        (op.source, op.target, op.change_type)
+        for op in existing_operations
+        if isinstance(op, ReferenceOperation)
+    }
+
+    for vertex_id in sorted(delta_details.delta.added_vertices):
+        constraint = right_graph.get_vertex(vertex_id)
+
+        if constraint is None:
+            continue
+
+        if constraint.object_type != ObjectType.CONSTRAINT:
+            continue
+
+        attrs = constraint.attr_dict()
+
+        if attrs.get("constraint_type") != "FOREIGN_KEY":
+            continue
+
+        owner_edges = [
+            edge
+            for edge in right_graph.edges_to(constraint.object_id)
+            if edge.edge_type == EdgeType.HAS_CONSTRAINT
+        ]
+
+        for owner_edge in owner_edges:
+            source_column_id = owner_edge.source_id
+
+            reference_edges = [
+                edge
+                for edge in right_graph.edges_from(source_column_id)
+                if edge.edge_type == EdgeType.REFERENCES
+            ]
+
+            for reference_edge in reference_edges:
+                key = (
+                    reference_edge.source_id,
+                    reference_edge.target_id,
+                    ReferenceChangeType.ADD,
+                )
+
+                if key in existing_refs:
+                    continue
+
+                operations.append(
+                    ReferenceOperation(
+                        source=reference_edge.source_id,
+                        target=reference_edge.target_id,
+                        change_type=ReferenceChangeType.ADD,
+                    )
+                )
+
+                existing_refs.add(key)
+
+    return operations
+
+
+def build_modified_pair_rename_map(
     left_graph: SchemaGraph,
     right_graph: SchemaGraph,
     delta_details: DeltaDetails,
 ) -> Dict[str, str]:
+    """
+    Rename-карта для объектов, которые matching уже сопоставил
+    как modified_vertex_pairs.
+    """
     rename_map: Dict[str, str] = {}
 
     for left_id, right_id in sorted(delta_details.modified_vertex_pairs):
@@ -215,6 +294,133 @@ def build_rename_map(
     return rename_map
 
 
+def build_similarity_rename_map(
+    left_graph: SchemaGraph,
+    right_graph: SchemaGraph,
+    delta_details: DeltaDetails,
+    existing_rename_map: Dict[str, str],
+) -> Dict[str, str]:
+    """
+    Дополнительное восстановление Rename из пары RemovedVertex + AddedVertex.
+
+    Это нужно для случаев, когда matching не смог напрямую сопоставить
+    объект до и после переименования, и diff выглядит как Drop + Add.
+    """
+    rename_map: Dict[str, str] = dict(existing_rename_map)
+
+    used_left_ids = set(rename_map.keys())
+    used_right_ids = set(rename_map.values())
+
+    removed_objects: List[SchemaObject] = []
+    added_objects: List[SchemaObject] = []
+
+    for vertex_id in sorted(delta_details.delta.removed_vertices):
+        obj = left_graph.get_vertex(vertex_id)
+
+        if obj is None:
+            continue
+
+        if obj.object_id in used_left_ids:
+            continue
+
+        if is_builtin_data_type(obj):
+            continue
+
+        if is_child_of_renamed_table(obj.object_id, rename_map):
+            continue
+
+        removed_objects.append(obj)
+
+    for vertex_id in sorted(delta_details.delta.added_vertices):
+        obj = right_graph.get_vertex(vertex_id)
+
+        if obj is None:
+            continue
+
+        if obj.object_id in used_right_ids:
+            continue
+
+        if is_builtin_data_type(obj):
+            continue
+
+        if is_child_of_renamed_table(obj.object_id, rename_map):
+            continue
+
+        added_objects.append(obj)
+
+    candidates: List[Tuple[float, str, str]] = []
+
+    for left_obj in removed_objects:
+        for right_obj in added_objects:
+            if left_obj.object_type != right_obj.object_type:
+                continue
+
+            score = rename_candidate_score(
+                graph_before=left_graph,
+                graph_after=right_graph,
+                old_obj=left_obj,
+                new_obj=right_obj,
+            )
+
+            if score >= RENAME_THRESHOLD:
+                candidates.append(
+                    (
+                        score,
+                        left_obj.object_id,
+                        right_obj.object_id,
+                    )
+                )
+
+    candidates.sort(
+        key=lambda item: (
+            -item[0],
+            item[1],
+            item[2],
+        )
+    )
+
+    for score, left_id, right_id in candidates:
+        _ = score
+
+        if left_id in used_left_ids:
+            continue
+
+        if right_id in used_right_ids:
+            continue
+
+        rename_map[left_id] = right_id
+        used_left_ids.add(left_id)
+        used_right_ids.add(right_id)
+
+    return rename_map
+
+
+def build_rename_map(
+    left_graph: SchemaGraph,
+    right_graph: SchemaGraph,
+    delta_details: DeltaDetails,
+) -> Dict[str, str]:
+    """
+    Итоговая rename-карта.
+
+    Источники:
+    1. modified_vertex_pairs — уверенное сопоставление matching'ом;
+    2. similarity-based Drop/Add matching — вероятное переименование.
+    """
+    modified_pair_map = build_modified_pair_rename_map(
+        left_graph=left_graph,
+        right_graph=right_graph,
+        delta_details=delta_details,
+    )
+
+    return build_similarity_rename_map(
+        left_graph=left_graph,
+        right_graph=right_graph,
+        delta_details=delta_details,
+        existing_rename_map=modified_pair_map,
+    )
+
+
 def build_add_operations(
     right_graph: SchemaGraph,
     delta_details: DeltaDetails,
@@ -224,7 +430,11 @@ def build_add_operations(
 
     for vertex_id in sorted(delta_details.delta.added_vertices):
         obj = right_graph.get_vertex(vertex_id)
+
         if obj is None:
+            continue
+
+        if is_object_part_of_rename(obj.object_id, rename_left_to_right):
             continue
 
         if is_child_of_renamed_table(obj.object_id, rename_left_to_right):
@@ -247,6 +457,7 @@ def build_add_operations(
 
     for edge_id in sorted(delta_details.delta.added_edges):
         edge = right_graph.get_edge(edge_id)
+
         if edge is None:
             continue
 
@@ -256,7 +467,6 @@ def build_add_operations(
         if is_edge_inside_renamed_table(edge, rename_left_to_right):
             continue
 
-        # Structural edges не являются самостоятельными semantic operations.
         if is_structural_edge(edge):
             continue
 
@@ -264,6 +474,7 @@ def build_add_operations(
             edge=edge,
             change_type=ReferenceChangeType.ADD,
         )
+
         if reference_op is not None:
             operations.append(reference_op)
             continue
@@ -282,6 +493,14 @@ def build_add_operations(
             )
         )
 
+    operations.extend(
+        build_reference_operations_from_added_fk_constraints(
+            right_graph=right_graph,
+            delta_details=delta_details,
+            existing_operations=operations,
+        )
+    )
+
     return operations
 
 
@@ -294,6 +513,7 @@ def build_drop_operations(
 
     for edge_id in sorted(delta_details.delta.removed_edges):
         edge = left_graph.get_edge(edge_id)
+
         if edge is None:
             continue
 
@@ -303,8 +523,6 @@ def build_drop_operations(
         if is_edge_inside_renamed_table(edge, rename_left_to_right):
             continue
 
-        # Structural edges не должны становиться DropOperation.
-        # Drop(Column/Table/Constraint/Index) сам удалит incident edges в apply.py.
         if is_structural_edge(edge):
             continue
 
@@ -312,6 +530,7 @@ def build_drop_operations(
             edge=edge,
             change_type=ReferenceChangeType.DROP,
         )
+
         if reference_op is not None:
             operations.append(reference_op)
             continue
@@ -320,7 +539,11 @@ def build_drop_operations(
 
     for vertex_id in sorted(delta_details.delta.removed_vertices):
         obj = left_graph.get_vertex(vertex_id)
+
         if obj is None:
+            continue
+
+        if is_object_part_of_rename(obj.object_id, rename_left_to_right):
             continue
 
         if is_child_of_renamed_table(obj.object_id, rename_left_to_right):
@@ -338,8 +561,11 @@ def build_rename_modify_operations(
     left_graph: SchemaGraph,
     right_graph: SchemaGraph,
     delta_details: DeltaDetails,
+    rename_left_to_right: Dict[str, str],
 ) -> List[Operation]:
     operations: List[Operation] = []
+
+    processed_rename_left_ids: Set[str] = set()
 
     for left_id, right_id in sorted(delta_details.modified_vertex_pairs):
         left_obj = left_graph.get_vertex(left_id)
@@ -358,6 +584,7 @@ def build_rename_modify_operations(
                     new_name=right_obj.name,
                 )
             )
+            processed_rename_left_ids.add(left_obj.object_id)
 
         if is_modify(left_obj, right_obj):
             delta = object_attr_delta(left_obj, right_obj)
@@ -371,6 +598,37 @@ def build_rename_modify_operations(
                     )
                 )
 
+    for left_id, right_id in sorted(rename_left_to_right.items()):
+        if left_id in processed_rename_left_ids:
+            continue
+
+        left_obj = left_graph.get_vertex(left_id)
+        right_obj = right_graph.get_vertex(right_id)
+
+        if left_obj is None or right_obj is None:
+            continue
+
+        if is_builtin_data_type(left_obj) or is_builtin_data_type(right_obj):
+            continue
+
+        operations.append(
+            RenameOperation(
+                target=left_obj.object_id,
+                new_name=right_obj.name,
+            )
+        )
+
+        delta = object_attr_delta(left_obj, right_obj)
+        delta.pop("name", None)
+
+        if delta:
+            operations.append(
+                ModifyOperation(
+                    target=left_obj.object_id,
+                    delta=freeze_attrs(delta),
+                )
+            )
+
     for left_id, right_id in sorted(delta_details.modified_edge_pairs):
         left_edge = left_graph.get_edge(left_id)
         right_edge = right_graph.get_edge(right_id)
@@ -382,6 +640,7 @@ def build_rename_modify_operations(
             continue
 
         delta = edge_attr_delta(left_edge, right_edge)
+
         if delta:
             operations.append(
                 ModifyOperation(
@@ -441,6 +700,7 @@ def operation_priority(operation: Operation) -> int:
     if isinstance(operation, ReferenceOperation):
         if operation.change_type == ReferenceChangeType.DROP:
             return 8
+
         return 80
 
     if isinstance(operation, DropOperation):
@@ -469,14 +729,19 @@ def operation_priority(operation: Operation) -> int:
 def operation_targets(operation: Operation) -> Set[str]:
     if isinstance(operation, AddOperation):
         return {operation.target}
+
     if isinstance(operation, DropOperation):
         return {operation.target}
+
     if isinstance(operation, ModifyOperation):
         return {operation.target}
+
     if isinstance(operation, RenameOperation):
         return {operation.target}
+
     if isinstance(operation, ReferenceOperation):
         return {operation.source, operation.target}
+
     return set()
 
 
@@ -552,8 +817,10 @@ def reconstruct_operations(
             left_graph=left_graph,
             right_graph=right_graph,
             delta_details=delta_details,
+            rename_left_to_right=rename_left_to_right,
         )
     )
 
     ordered = topological_sort_operations(operations, right_graph)
+
     return ReconstructionResult(operations=ordered)

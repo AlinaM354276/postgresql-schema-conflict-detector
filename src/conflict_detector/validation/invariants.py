@@ -230,6 +230,58 @@ def check_index_columns_exist(graph: SchemaGraph) -> List[InvariantViolation]:
     return violations
 
 
+def check_foreign_key_constraints_have_reference(graph: SchemaGraph) -> List[InvariantViolation]:
+    violations: List[InvariantViolation] = []
+
+    for constraint in graph.find_vertices_by_type(ObjectType.CONSTRAINT):
+        attrs = constraint.attr_dict()
+
+        if attrs.get("constraint_type") != ConstraintType.FOREIGN_KEY.value:
+            continue
+
+        incoming_has_constraint = [
+            edge
+            for edge in graph.edges_to(constraint.object_id)
+            if edge.edge_type == EdgeType.HAS_CONSTRAINT
+        ]
+
+        if not incoming_has_constraint:
+            violations.append(
+                InvariantViolation(
+                    invariant_id="INV_FOREIGN_KEY_HAS_OWNER_COLUMN",
+                    message="Foreign key constraint must be attached to a source column.",
+                    object_ids=(constraint.object_id,),
+                )
+            )
+            continue
+
+        has_reference = False
+
+        for owner_edge in incoming_has_constraint:
+            source_column_id = owner_edge.source_id
+
+            reference_edges = [
+                edge
+                for edge in graph.edges_from(source_column_id)
+                if edge.edge_type == EdgeType.REFERENCES
+            ]
+
+            if reference_edges:
+                has_reference = True
+                break
+
+        if not has_reference:
+            violations.append(
+                InvariantViolation(
+                    invariant_id="INV_FOREIGN_KEY_HAS_REFERENCE",
+                    message="Foreign key constraint must have a reference edge to target column.",
+                    object_ids=(constraint.object_id,),
+                )
+            )
+
+    return violations
+
+
 def validate_schema_invariants(graph: SchemaGraph) -> InvariantCheckResult:
     violations: List[InvariantViolation] = []
 
@@ -240,5 +292,6 @@ def validate_schema_invariants(graph: SchemaGraph) -> InvariantCheckResult:
     violations.extend(check_references_target_existing_column(graph))
     violations.extend(check_single_primary_key_per_table(graph))
     violations.extend(check_index_columns_exist(graph))
+    violations.extend(check_foreign_key_constraints_have_reference(graph))
 
     return InvariantCheckResult(violations=tuple(violations))
