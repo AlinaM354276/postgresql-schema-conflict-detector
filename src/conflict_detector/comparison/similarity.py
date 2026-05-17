@@ -29,17 +29,6 @@ def boolean_similarity(a: object, b: object) -> float:
     return 1.0 if a == b else 0.0
 
 
-def object_type_similarity(
-    old_obj: SchemaObject,
-    new_obj: SchemaObject,
-) -> float:
-    return (
-        1.0
-        if old_obj.object_type == new_obj.object_type
-        else 0.0
-    )
-
-
 def owner_similarity(
     old_obj: SchemaObject,
     new_obj: SchemaObject,

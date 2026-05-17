@@ -78,21 +78,6 @@ def is_builtin_data_type(obj: SchemaObject) -> bool:
     )
 
 
-def is_builtin_data_type_id(object_id: str, graph: SchemaGraph) -> bool:
-    obj = graph.get_vertex(object_id)
-    return obj is not None and is_builtin_data_type(obj)
-
-
-def is_edge_connected_to_builtin_data_type(
-    edge: SchemaEdge,
-    graph: SchemaGraph,
-) -> bool:
-    return (
-        is_builtin_data_type_id(edge.source_id, graph)
-        or is_builtin_data_type_id(edge.target_id, graph)
-    )
-
-
 def is_rename(left: SchemaObject, right: SchemaObject) -> bool:
     """
     Rename определяется по изменению имени у уже сопоставленной пары объектов.
@@ -724,25 +709,6 @@ def operation_priority(operation: Operation) -> int:
         return 70
 
     return 100
-
-
-def operation_targets(operation: Operation) -> Set[str]:
-    if isinstance(operation, AddOperation):
-        return {operation.target}
-
-    if isinstance(operation, DropOperation):
-        return {operation.target}
-
-    if isinstance(operation, ModifyOperation):
-        return {operation.target}
-
-    if isinstance(operation, RenameOperation):
-        return {operation.target}
-
-    if isinstance(operation, ReferenceOperation):
-        return {operation.source, operation.target}
-
-    return set()
 
 
 def topological_sort_operations(
