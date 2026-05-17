@@ -194,9 +194,36 @@ def main() -> None:
 
         if args.base and not args.no_graphs:
             print("Schema graphs saved:")
-            print(f"- {out_dir / 'base_graph.dot'}")
-            print(f"- {out_dir / 'branch_a_graph.dot'}")
-            print(f"- {out_dir / 'branch_b_graph.dot'}")
+
+            saved_graphs = [
+                out_dir / "base_graph.dot",
+                out_dir / "branch_a_graph.dot",
+                out_dir / "branch_b_graph.dot",
+            ]
+
+            path_ab = artifacts.result.merge_attempt.path_ab
+            path_ba = artifacts.result.merge_attempt.path_ba
+
+            if (
+                    path_ab.graph is not None
+                    and path_ab.is_constructed
+                    and path_ab.invariant_result.is_valid()
+            ):
+                saved_graphs.append(
+                    out_dir / "merge_ab_graph.dot"
+                )
+
+            if (
+                    path_ba.graph is not None
+                    and path_ba.is_constructed
+                    and path_ba.invariant_result.is_valid()
+            ):
+                saved_graphs.append(
+                    out_dir / "merge_ba_graph.dot"
+                )
+
+            for graph_path in saved_graphs:
+                print(f"- {graph_path}")
 
 
 if __name__ == "__main__":
