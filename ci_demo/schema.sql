@@ -5,5 +5,8 @@ CREATE TABLE users (
 
 CREATE TABLE orders (
     id INT PRIMARY KEY,
-    user_id INT
+    user_id INT,
+    CONSTRAINT fk_orders_user_email
+        FOREIGN KEY (user_id)
+        REFERENCES users(email)
 );
