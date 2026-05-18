@@ -1,6 +1,5 @@
 CREATE TABLE users (
-    id INT PRIMARY KEY,
-    email VARCHAR(255)
+    id INT PRIMARY KEY
 );
 
 CREATE TABLE orders (
