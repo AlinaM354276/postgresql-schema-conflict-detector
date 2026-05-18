@@ -41,13 +41,23 @@ jobs:
         run: |
           git fetch --all
 
-      - name: Run analyzer on Git branches
+
+      - name: Extract schemas from branches
+        run: |
+          mkdir -p ci_extract
+
+          git show origin/main:ci_demo/schema.sql > ci_extract/base.sql
+          git show origin/test-a:ci_demo/schema.sql > ci_extract/a.sql
+          git show origin/test-b:ci_demo/schema.sql > ci_extract/b.sql
+
+      - name: Run analyzer
         run: |
           mkdir -p schema-merge-report
+  
           python -m src.conflict_detector.cli \
-            --repo . \
-            --branch-a origin/test-a \
-            --branch-b origin/test-b \
+            --base ci_extract/base.sql \
+            --a ci_extract/a.sql \
+            --b ci_extract/b.sql \
             --out schema-merge-report \
             --impact-threshold 5
 
