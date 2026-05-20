@@ -915,13 +915,24 @@ class R2TypeInconsistencyRule(BaseConflictRule):
         a = context.operation_a
         b = context.operation_b
 
+        # Одинаковые изменения одного и того же атрибута в обеих ветках
+        # не являются конфликтом.
+        # Пример: обе ветки выполняют ALTER COLUMN price TYPE bigint.
+        if (
+                isinstance(a, ModifyOperation)
+                and isinstance(b, ModifyOperation)
+                and a.target == b.target
+                and delta_dict(a) == delta_dict(b)
+        ):
+            return RuleCheckResult.no_match()
+
         if isinstance(a, ModifyOperation) and type_changed(a):
             column = a.target
 
             if (
-                column in set(context.shared_impact)
-                or column in operation_targets(b)
-                or operation_assumes_column_type(b, column)
+                    column in set(context.shared_impact)
+                    or column in operation_targets(b)
+                    or operation_assumes_column_type(b, column)
             ):
                 if operation_assumes_column_type(b, column):
                     return RuleCheckResult.from_conflict(
@@ -942,6 +953,36 @@ class R2TypeInconsistencyRule(BaseConflictRule):
                             },
                         )
                     )
+
+        if isinstance(b, ModifyOperation) and type_changed(b):
+            column = b.target
+
+            if (
+                    column in set(context.shared_impact)
+                    or column in operation_targets(a)
+                    or operation_assumes_column_type(a, column)
+            ):
+                if operation_assumes_column_type(a, column):
+                    return RuleCheckResult.from_conflict(
+                        make_conflict(
+                            rule_id=self.rule_id,
+                            message=(
+                                "Column data type is changed in one branch while "
+                                "another branch adds or modifies a dependent object "
+                                "that assumes the old column type."
+                            ),
+                            severity=SeverityLevel.HIGH,
+                            context=context,
+                            object_ids={column, *operation_targets(a)},
+                            metadata={
+                                "changed_column_id": column,
+                                "new_type_delta": delta_dict(b),
+                                "kind": "type_inconsistency",
+                            },
+                        )
+                    )
+
+        return RuleCheckResult.no_match()
 
         if isinstance(b, ModifyOperation) and type_changed(b):
             column = b.target

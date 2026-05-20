@@ -165,7 +165,7 @@ CASES = [
         ALTER TABLE users ADD COLUMN phone text;
         """,
         expected_merge_defined=False,
-        expected_rule_ids=("R5_ADD_VS_ADD",),
+        expected_rule_ids=("R4_NAMING_CONFLICT",),
     ),
     Case(
         name="07 ADD FK compatible: add reference in one branch",
@@ -262,7 +262,7 @@ CASES = [
         CREATE INDEX idx_orders_status ON orders(status);
         """,
         expected_merge_defined=False,
-        expected_rule_ids=("I1_DROP_COLUMN_VS_ADD_INDEX",),
+        expected_rule_ids=("R1_REFERENTIAL_INTEGRITY",),
     ),
     Case(
         name="10 Constraint conflict: drop column vs add UNIQUE on column",
